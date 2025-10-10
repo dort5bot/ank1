@@ -1,0 +1,180 @@
+meta:
+  source: Binance
+  version: "2025.1"
+  last_updated: "2025-10-10"
+  maintainer: "ysf-bot-framework"
+  schema_version: 1.2
+  description: "Binance public REST API endpoints for market data, trend, liquidity, and analytics."
+
+public_spot:
+  get_exchange_info:
+    client: SpotClient
+    method: get_exchange_info
+    path: /api/v3/exchangeInfo
+    http_method: GET
+    signed: false
+    scope: market
+    base: spot
+    weight: 10
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 3600
+    job_type: io
+    purpose: "Fetch exchange trading rules, symbol info, filters"
+    tags: [public, meta, exchange]
+    enabled: true
+    version: v3
+    return_type: dict
+
+  get_symbol_price:
+    client: SpotClient
+    method: get_symbol_price
+    path: /api/v3/ticker/price
+    http_method: GET
+    signed: false
+    scope: market
+    base: spot
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Get current price for symbol (used in trend/correlation analysis)"
+    tags: [public, price, analysis]
+    enabled: true
+    version: v3
+    return_type: dict
+
+  get_order_book:
+    client: SpotClient
+    method: get_book_ticker
+    path: /api/v3/ticker/bookTicker
+    http_method: GET
+    signed: false
+    scope: orderbook
+    base: spot
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 3
+    job_type: io
+    purpose: "Fetch best bid/ask data for orderbook-based liquidity analysis"
+    tags: [public, orderbook, liquidity]
+    enabled: true
+    version: v3
+    return_type: dict
+
+  get_klines:
+    client: SpotClient
+    method: get_klines
+    path: /api/v3/klines
+    http_method: GET
+    signed: false
+    scope: market
+    base: spot
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 15
+    job_type: io
+    purpose: "Fetch historical OHLCV data for trend, momentum and volatility analysis"
+    tags: [public, candles, trend, analysis]
+    enabled: true
+    version: v3
+    return_type: list
+
+  get_ticker_24h:
+    client: SpotClient
+    method: get_ticker_24h
+    path: /api/v3/ticker/24hr
+    http_method: GET
+    signed: false
+    scope: market
+    base: spot
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Retrieve 24-hour price change statistics for trend strength metrics"
+    tags: [public, ticker, volatility, analysis]
+    enabled: true
+    version: v3
+    return_type: dict
+
+public_futures:
+  get_mark_price:
+    client: FuturesClient
+    method: get_mark_price
+    path: /fapi/v1/premiumIndex
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 2
+    job_type: io
+    purpose: "Fetch mark price and funding rate for futures analysis"
+    tags: [public, futures, funding, analysis]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  get_open_interest:
+    client: FuturesClient
+    method: get_open_interest
+    path: /fapi/v1/openInterest
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 10
+    job_type: io
+    purpose: "Retrieve open interest data for liquidity/trend confirmation"
+    tags: [public, open_interest, liquidity, futures]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  get_funding_rate_history:
+    client: FuturesClient
+    method: get_funding_rate_history
+    path: /fapi/v1/fundingRate
+    http_method: GET
+    signed: false
+    scope: funding
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 30
+    job_type: io
+    purpose: "Historical funding rates for sentiment and funding premium analysis"
+    tags: [public, funding, sentiment]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_liquidation_orders:
+    client: FuturesClient
+    method: get_liquidation_orders
+    path: /fapi/v1/allForceOrders
+    http_method: GET
+    signed: false
+    scope: risk
+    base: futures
+    weight: 20
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 20
+    job_type: io
+    purpose: "Fetch forced liquidation data for stress and volatility metrics"
+    tags: [public, liquidation, risk, futures]
+    enabled: true
+    version: v1
+    return_type: list
