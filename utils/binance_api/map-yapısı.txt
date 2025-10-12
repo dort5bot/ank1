@@ -1,0 +1,325 @@
+🧱 1️⃣ Yeni Mimari Hedef Yapı
+utils/
+└── binance_api/
+    ├── __init__.py
+    ├── binance_a.py                 # 🧠 Ana aggregator (public/private sınıflar dahil)
+    ├── b-map_public.yaml            # 🌐 Public API endpoints
+    ├── b-map_private.yaml           # 🔐 Private API endpoints
+    │    
+    ├── binance_multi_user.py        # Çoklu kullanıcı (Multi API key yönetimi)
+    │  
+    ├── binance_client.py            # HTTP + Auth yönetimi
+    ├── binance_circuit_breaker.py   # Rate limit & error kontrol
+    ├── binance_request.py           # Asenkron istek yöneticisi (aiohttp tabanlı)
+    ├── binance_constants.py         # Sabitler ve base URL'ler
+    ├── binance_exceptions.py        # Hata tipleri (ör. BinanceAPIError)
+    ├── binance_types.py             # Type hint'ler (TypedDict’ler)
+    ├── binance_metrics.py           # Opsiyonel: API performans ölçüm / latency log
+    ├── binance_websocket.py         # Stream API (gerçek zamanlı)
+    ├── binance_ws_pydantic.py       # WebSocket için model doğrulama (opsiyonel)
+    └── README.md
+
+
+🧩 2️⃣ Dosya Rollerinin Net Tanımı
+
+| Dosya                        | Görev                                                           | Durum                                             |
+| :--------------------------- | :-------------------------------------------------------------- | :------------------------------------------------ |
+| `binance_a.py`               | Tüm endpoint’leri YAML’den okuyan **tek ana aggregator**        | ✅ Zorunlu                                         |
+| `b-map_public.yaml`          | Spot, Futures vb. tüm public API tanımları                      | ✅ Zorunlu                                         |
+| `b-map_private.yaml`         | Private API tanımları (account, order, oco, margin...)          | ✅ Zorunlu                                         |
+| `binance_client.py`          | HTTP client, header/auth yönetimi                               | ✅ Zorunlu                                         |
+| `binance_circuit_breaker.py` | Error retry, cooldown, rate-limit kontrolü                      | ✅ Zorunlu                                         |
+| `binance_multi_user.py`      | Çoklu kullanıcı API key desteği (multi account)                 | ✅ Zorunlu (eğer multi-user desteklenecekse)       |
+| `binance_exceptions.py`      | Standart hata türleri (ör. `BinanceAPIError`, `RateLimitError`) | ✅ Zorunlu                                         |
+| `binance_request.py`         | Asenkron istek (aiohttp wrapper)                                | ✅ Zorunlu                                         |
+| `binance_constants.py`       | Base URL’ler, endpoint kategorileri                             | ✅ Zorunlu                                         |
+| `binance_metrics.py`         | Performans loglama, çağrı süresi ölçümü                         | ⚙️ İsteğe bağlı                                   |
+| `binance_types.py`           | Type hint’ler (ör. `OrderBook`, `Ticker`)                       | ⚙️ İsteğe bağlı ama önerilir                      |
+| `binance_websocket.py`       | Gerçek zamanlı veri akışı                                       | ⚙️ İsteğe bağlı (trend modülü gerçek zamanlı ise) |
+| `binance_ws_pydantic.py`     | WebSocket mesaj doğrulama                                       | ⚙️ İsteğe bağlı (stream veri kalitesi için)       |
+
+
+⚙️ 3️⃣ binance_a.py – Aggregator’ın Yeni Yapısı
+Bu dosya artık aşağıdaki üç sorumluluğu üstlenir:
+PublicAPI ve PrivateAPI class’larını yönetir
+YAML dosyalarını dinamik olarak yükler ve cache eder
+Multi-user ve circuit-breaker sistemleriyle birlikte çalışır
+
+
+
+🔁 6️⃣ Avantajlar
+
+| Alan                 | Yeni Yapı                     | Açıklama                                 |
+| :------------------- | :---------------------------- | :--------------------------------------- |
+| Dosya sayısı         | ~25 ➜ **8–10**                | Bakım yükü büyük ölçüde azalır           |
+| Yeni endpoint ekleme | YAML’e 1 satır                | Kod değişmeden olur                      |
+| Çoklu kullanıcı      | Aggregator sınıfında flag ile | Dahili destek                            |
+| Test & mock          | Aggregator düzeyinde kolay    | End-to-end test sadeleşir                |
+| Performans           | Aynı                          | YAML 1 defa cache’lenir                  |
+| Hata yönetimi        | Circuit breaker entegre       | Otomatik retry / failover                |
+| Bot uyumluluğu       | Mükemmel                      | `/etf`, `/trend` gibi komutlar sadeleşir |
+
+
+⚙️ 7️⃣ En Az Gerekli Dosya Listesi (Tam Set)
+| Dosya                        | Açıklama                          |
+| :--------------------------- | :-------------------------------- |
+| `binance_a.py`               | Ana aggregator                    |
+| `b-map_public.yaml`          | Public endpoint haritası          |
+| `b-map_private.yaml`         | Private endpoint haritası         |
+| `binance_client.py`          | HTTP client                       |
+| `binance_request.py`         | Asenkron istek işleyici           |
+| `binance_circuit_breaker.py` | Retry & rate limit kontrol        |
+| `binance_multi_user.py`      | Çoklu API key yönetimi            |
+| `binance_exceptions.py`      | Hata sınıfları                    |
+| `binance_constants.py`       | Base URL’ler, sabitler            |
+| `binance_types.py`           | Type hint / dataclass (opsiyonel) |
+
+
+
+
+🧱 8️⃣ Sonuç — Uzun Ömürlü YAML Standardı Özeti
+
+| Özellik                                   | Gereklilik                        | Amaç                               |
+| :---------------------------------------- | :-------------------------------- | :--------------------------------- |
+| `client`, `method`, `path`, `http_method` | ✅ Zorunlu                         | Yönlendirme ve çağrı               |
+| `signed`, `scope`, `base`                 | ✅ Zorunlu                         | Erişim türü ve alan                |
+| `rate_limit_type`, `weight`               | ✅ Uzun ömür                       | Rate limit kontrolü                |
+| `multi_user_support`                      | ✅ Multi-user yapı için            | Paralel key yönetimi               |
+| `cache_ttl`, `job_type`                   | ⚙️ Performans / optimizasyon      | Paralel task planlama              |
+| `purpose`, `tags`, `enabled`, `version`   | ⚙️ Dokümantasyon / feature toggle | Kod dışı yönetim                   |
+| `response_fields`                         | ⚙️ Veri doğrulama / test          | Otomatik test & validasyon desteği |
+
+
+
+🧱 3️⃣ Özellik Özeti
+
+| Özellik                       | Public Map                     | Private Map                |
+| :---------------------------- | :----------------------------- | :------------------------- |
+| Trend & fiyat verileri        | ✅ (klines, ticker, price)      | ❌                          |
+| Likidite & funding            | ✅ (fundingRate, orderBook)     | ✅ (balance, risk)          |
+| Portföy & risk                | ⚙️ (openInterest, liquidation)  | ✅ (snapshot, positionRisk) |
+| Trade işlemleri               | ❌                              | ✅ (order, cancel, trades)  |
+| Multi-user desteği            | ✅                              | ✅                          |
+| Cache TTL & Rate Limit        | ✅                              | ✅                          |
+| Sürüm takibi & feature toggle | ✅                              | ✅                          |
+
+
+
+
+Aggregator tek başına bunları yapabilir mi?
+| Özellik               | Aggregator (tek başına)             | +Validator              | +MapLoader            |
+| :-------------------- | :---------------------------------- | :---------------------- | :-------------------- |
+| YAML yükleme          | ✅ manuel (örneğin `yaml.safe_load`) | ⚙️ otomatik doğrulanmış | ⚙️ otomatik & dinamik |
+| Hata tespiti          | ⚠️ runtime’da (geç)                 | ✅ build-time            | ✅ build-time + reload |
+| Çoklu dosya desteği   | ⚠️ sınırlı                          | ✅                       | ✅                     |
+| Kapsam (future-proof) | Orta                                | Yüksek                  | Çok yüksek            |
+| Kod bakım kolaylığı   | Orta                                | İyi                     | En iyi                |
+| Multi-user destek     | Evet                                | Evet                    | Evet                  |
+
+
+| Özellik                       | Açıklama                                             |
+| :---------------------------- | :--------------------------------------------------- |
+| **Tam otomatik map yönetimi** | Yeni endpoint eklemek sadece `.yaml`’e satır eklemek |
+| **Validasyon**                | Yanlış endpoint tanımı build-time’da yakalanır       |
+| **Multi-user desteği**        | Her kullanıcı farklı anahtarla güvenli çalışır       |
+| **Aggregator sadeleşir**      | Yalnızca “çalıştırıcı” rolünde kalır                 |
+| **Yüksek dayanıklılık**       | Circuit breaker + async destekli                     |
+
+
+=============================
+
+🧭 1️⃣ Binance API Kategorileri (Resmî Ayırım)
+Binance API aslında 6 temel kategoriye ayrılır:
+
+| Kategori                              | API Alanı            | Erişim Türü            |
+| :------------------------------------ | :------------------- | :--------------------- |
+| **Spot**                              | `/api/v3/*`          | Public + Private       |
+| **Futures (USD-M & COIN-M)**          | `/fapi/*`, `/dapi/*` | Public + Private       |
+| **Savings / Staking / Earn / Margin** | `/sapi/v1/*`         | Private                |
+| **Portfolio / Sub-account / Wallet**  | `/sapi/v2/*`         | Private                |
+| **System / Ping / Exchange Info**     | `/api/v3/system/*`   | Public                 |
+| **WebSocket / Stream**                | `/ws/`, `/stream`    | Public + Authenticated |
+
+
+
+⚙️ 2️⃣ Senin Kullanım Amacına Göre Gerekli API Setleri
+| Fonksiyon                                    | Gerekli API Alanı      | Endpoint Örnekleri                                             | Public / Private         |
+| :------------------------------------------- | :--------------------- | :------------------------------------------------------------- | :----------------------- |
+| **Fiyat Takibi (Analiz)**                    | Spot, Futures Public   | `/api/v3/klines`, `/fapi/v1/markPrice`, `/api/v3/ticker/price` | Public                   |
+| **Momentum / Trend Analizi**                 | Spot Public            | `/api/v3/klines`, `/api/v3/avgPrice`                           | Public                   |
+| **Funding Rate / Open Interest Analizi**     | Futures Public         | `/fapi/v1/fundingRate`, `/fapi/v1/openInterestHist`            | Public                   |
+| **Pozisyon / Order Yönetimi**                | Spot & Futures Private | `/api/v3/order`, `/api/v3/account`, `/fapi/v2/positionRisk`    | Private                  |
+| **Risk Yönetimi / Leverage**                 | Futures Private        | `/fapi/v2/leverageBracket`, `/fapi/v1/account`                 | Private                  |
+| **Portföy Takibi (Balance)**                 | Spot Private           | `/api/v3/account`, `/sapi/v1/accountSnapshot`                  | Private                  |
+| **WebSocket (Gerçek zamanlı trade / depth)** | Spot & Futures Stream  | `/ws/<symbol>@trade`, `/ws/<symbol>@depth`                     | Public/Private opsiyonel |
+
+
+✅ 3️⃣ Sonuç: Sadece 2 YAML Dosya (Public + Private) Yeterli
+
+Binance API’nin kritik operasyonlarının %95’i şu iki YAML dosyada tutulabilir:
+
+b-map_public.yaml
+Fiyat, trend, likidite, funding, orderbook verilerini kapsar.
+Analiz, izleme, korelasyon, trend-momentum hesaplamaları için yeterlidir.
+Gereken endpoint sayısı: ~25–30.
+
+b-map_private.yaml
+Trade, account, order, balance, risk ve snapshot yönetimini kapsar.
+Trade botları, pozisyon analizleri, risk kontrolü için yeterlidir.
+Gereken endpoint sayısı: ~30–40.
+
+
+🧩 4️⃣ Kapsamlı Tavsiye: 2 YAML ile Tüm Kritik Alanların Kapsanması
+🔸 b-map_public.yaml
+
+Kapsamalı ana başlıklar:
+| Kategori                      | Örnek Endpoint                                                        | Amaç                          |
+| :---------------------------- | :-------------------------------------------------------------------- | :---------------------------- |
+| **Spot Market Data**          | `/api/v3/klines`, `/api/v3/ticker/price`, `/api/v3/depth`             | Trend & fiyat analizi         |
+| **Futures Market Data**       | `/fapi/v1/markPrice`, `/fapi/v1/fundingRate`, `/fapi/v1/premiumIndex` | Volatilite & funding          |
+| **Market Ticker / Stats**     | `/api/v3/ticker/24hr`                                                 | Momentum & hacim göstergeleri |
+| **System Info**               | `/api/v3/exchangeInfo`, `/api/v3/time`                                | Temel sistem bilgisi          |
+| **Trade Streams (opsiyonel)** | `/fapi/v1/trades`, `/api/v3/aggTrades`                                | Trade geçmişi & akış analizi  |
+
+🔸 b-map_private.yaml
+
+Kapsamalı ana başlıklar:
+| Kategori                        | Örnek Endpoint                                             | Amaç                     |
+| :------------------------------ | :--------------------------------------------------------- | :----------------------- |
+| **Account & Balance**           | `/api/v3/account`, `/sapi/v1/accountSnapshot`              | Portföy & varlık izleme  |
+| **Order Management**            | `/api/v3/order`, `/api/v3/openOrders`, `/api/v3/allOrders` | Trade işlemleri          |
+| **OCO / Stop Orders**           | `/api/v3/order/oco`                                        | Gelişmiş trade işlemleri |
+| **Trade History**               | `/api/v3/myTrades`                                         | Kapanan işlemler         |
+| **Futures Position & Risk**     | `/fapi/v2/positionRisk`, `/fapi/v2/balance`                | Risk yönetimi            |
+| **Leverage / Margin**           | `/fapi/v1/leverage`, `/fapi/v1/marginType`                 | Kaldıraç kontrolü        |
+| **User Stream Key (Opsiyonel)** | `/api/v3/userDataStream`                                   | WebSocket auth için      |
+
+
+🧱 5️⃣ Uzun Vadeli Sürdürülebilirlik
+| Genişletme Alanı           | Ne Zaman Gerekir                         | Ayrı YAML Gerekir mi?                      |
+| :------------------------- | :--------------------------------------- | :----------------------------------------- |
+| **Margin Trading**         | Spot kredili işlemler gerekiyorsa        | ⚙️ İleride `b-map_margin.yaml` eklenebilir |
+| **Earn / Staking / Loans** | Finansal ürün API’leri gerekirse         | ⚙️ `b-map_sapi.yaml` ileride eklenebilir   |
+| **Sub-Accounts**           | Çoklu hesap portföy yönetimi gerekiyorsa | ⚙️ `b-map_subaccount.yaml` eklenebilir     |
+| **Derivatives (COIN-M)**   | BTC/ETH vadeli işlemleri gerekirse       | ⚙️ `b-map_coinm.yaml` eklenebilir          |
+
+
+📊 6️⃣ Nitelikli Sistem için “İdeal Endpoint Sayısı” Rehberi
+
+| Amaç                      | Yaklaşık Endpoint Sayısı | Kaynak                        |
+| :------------------------ | :----------------------- | :---------------------------- |
+| Fiyat & Analiz (Public)   | 20–25                    | /api/v3 + /fapi/v1            |
+| Trade & Account (Private) | 25–30                    | /api/v3 + /fapi/v2            |
+| Risk / Position           | 5–8                      | /fapi/v2                      |
+| **Toplam**                | **~50–60** endpoint      | ✅ Yönetilebilir ve tam kapsam |
+
+
+
+
+🧱 1️⃣ Temel Mantık
+
+Her endpoint girdisi, sadece path değil:
+client yönlendirmesi (hangi API modülü: Spot / Futures / SAPI / WebSocket)
+erişim türü (public / private)
+method (GET/POST/DELETE)
+signature gereksinimi
+rate limit kategorisi
+multi-user davranışı
+TTL (cache süresi)
+yük tipi / iş tipi (CPU-bound, I/O-bound)
+etiketler / kategoriler (analiz, trade, risk, vs.)
+bilgilerini içerir.
+
+3️⃣ Alanların Ayrıntılı Açıklaması
+| Alan                   | Tür     | Açıklama                                                                          |
+| :--------------------- | :------ | :-------------------------------------------------------------------------------- |
+| **client**             | `str`   | Hangi client sınıfını kullanacağını belirtir (`SpotClient`, `FuturesClient`, vb.) |
+| **method**             | `str`   | O client içinde çağrılacak metod adı                                              |
+| **path**               | `str`   | Binance API endpoint path’i                                                       |
+| **http_method**        | `str`   | GET, POST, DELETE, PUT                                                            |
+| **signed**             | `bool`  | API key / signature gerektiriyor mu                                               |
+| **scope**              | `str`   | İşlem alanı: `account`, `order`, `trade`, `market`, `risk`, `funding`             |
+| **base**               | `str`   | `spot`, `futures`, `margin`, `sapi`, `system`                                     |
+| **weight**             | `int`   | Binance rate-limit weight değeri (ör. 10 = 10 point per request)                  |
+| **rate_limit_type**    | `str`   | `IP`, `USER`, `UID` (Binance’in rate limit mekanizması için)                      |
+| **multi_user_support** | `bool`  | Çoklu kullanıcı modunda çağrılabilir mi (örn. trade izinli endpoint)              |
+| **cache_ttl**          | `int`   | Sonuç cache süresi (saniye cinsinden, 0 = cache yok)                              |
+| **job_type**           | `str`   | `io`, `cpu`, `mixed` — analiz altyapısında paralel görev planlaması için          |
+| **purpose**            | `str`   | İnsan okunabilir açıklama (handler dokümantasyonu için)                           |
+| **tags**               | `[str]` | Arama / filtreleme için etiketler (ör. [trade, private, order])                   |
+| **enabled**            | `bool`  | Endpoint aktif mi (servis geçici devre dışıysa false yapılabilir)                 |
+| **version**            | `str`   | `/api/v3` içindeki versiyon takibi için (v3, v2, sapi/v1 vb.)                     |
+| **return_type**        | `str`   | Beklenen dönüş tipi (`dict`, `list`, `raw`)                                       |
+| **response_fields**    | `[str]` | Opsiyonel — expected response field listesi (doğrulama için)                      |
+
+
+
+
+⚙️ 6️⃣ Multi-User & Uzun Ömürlü Destek İçin Kritik Alanlar
+| Alan                         | Neden Gerekli                                                          | Uzun Ömürlü Kullanım Avantajı                                         |
+| :--------------------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------------- |
+| `multi_user_support`         | Aynı endpoint’in 10+ API key ile çağrılabilir olup olmadığını belirtir | Paralel kullanıcı yönetimi kolaylaşır                                 |
+| `rate_limit_type` + `weight` | Binance’in IP / USER bazlı limitlerini yönetmek için                   | Aggregator rate kontrolünü otomatik ayarlayabilir                     |
+| `cache_ttl`                  | Veriyi yeniden çağırmak yerine cache’den getirme süresi                | API limitini korur, hız kazandırır                                    |
+| `enabled`                    | Geçici olarak devre dışı endpoint’leri YAML üzerinden kapatmak         | Kodda değişiklik yapmadan feature toggle sağlar                       |
+| `version`                    | Binance zaman zaman `/api/v3`’ten `/sapi/v1`’e geçirir                 | Geriye dönük uyumluluk sağlar                                         |
+| `job_type`                   | CPU/IO ayrımı sayesinde async görev planlaması optimize edilir         | Sistem yük dengelemesi kolaylaşır                                     |
+| `tags`                       | Komut bazlı analiz modüllerinde endpoint gruplama sağlar               | `/trend`, `/risk`, `/sentiment` gibi handler’lar otomatik haritalanır |
+
+
+7️⃣ Önerilen Üst Düzey YAML Bölümleme
+ Uzun Ömürlü YAML Standardı Özeti
+| Özellik                                   | Gereklilik                        | Amaç                               |
+| :---------------------------------------- | :-------------------------------- | :--------------------------------- |
+| `client`, `method`, `path`, `http_method` | ✅ Zorunlu                         | Yönlendirme ve çağrı               |
+| `signed`, `scope`, `base`                 | ✅ Zorunlu                         | Erişim türü ve alan                |
+| `rate_limit_type`, `weight`               | ✅ Uzun ömür                       | Rate limit kontrolü                |
+| `multi_user_support`                      | ✅ Multi-user yapı için            | Paralel key yönetimi               |
+| `cache_ttl`, `job_type`                   | ⚙️ Performans / optimizasyon      | Paralel task planlama              |
+| `purpose`, `tags`, `enabled`, `version`   | ⚙️ Dokümantasyon / feature toggle | Kod dışı yönetim                   |
+| `response_fields`                         | ⚙️ Veri doğrulama / test          | Otomatik test & validasyon desteği |
+
+
+🧱 3️⃣ Özellik Özeti
+| Özellik                       | Public Map                     | Private Map                |
+| :---------------------------- | :----------------------------- | :------------------------- |
+| Trend & fiyat verileri        | ✅ (klines, ticker, price)      | ❌                          |
+| Likidite & funding            | ✅ (fundingRate, orderBook)     | ✅ (balance, risk)          |
+| Portföy & risk                | ⚙️ (openInterest, liquidation) | ✅ (snapshot, positionRisk) |
+| Trade işlemleri               | ❌                              | ✅ (order, cancel, trades)  |
+| Multi-user desteği            | ✅                              | ✅                          |
+| Cache TTL & Rate Limit        | ✅                              | ✅                          |
+| Sürüm takibi & feature toggle | ✅                              | ✅                          |
+
+
+⚙️ 1️⃣ b_map_validator.py — Otomatik YAML doğrulayıcı
+🎯 Amaç:
+
+Binance gibi büyük API haritalarında (100+ endpoint)
+yanlış path, eksik parametre veya imza hatası
+tek bir endpointi bile kullanılamaz hale getirir.
+Validator bunları otomatik test edip, Aggregator’a temiz bir map sağlar.
+
+görevi:
+| İşlev                          | Açıklama                                                                                              |
+| :----------------------------- | :---------------------------------------------------------------------------------------------------- |
+| **YAML şema kontrolü**         | `meta` alanı, `client`, `method`, `path`, `signed`, `version` gibi zorunlu alanlar var mı diye bakar. |
+| **Endpoint standardizasyonu**  | Binance REST standardı (`/api/v3`, `/sapi/v1`, `/fapi/v1`) ile uyuşmayan path’leri tespit eder.       |
+| **HTTP method kontrolü**       | GET/POST/DELETE dışında bir değer varsa uyarı verir.                                                  |
+| **Mantıksal hataları yakalar** | `signed: false` olan ama `USER` rate limit tipine sahip endpoint varsa hatalıdır → yakalar.           |
+| **İleri test (opsiyonel)**     | 1–2 endpointi “dry-run” test edip API anahtar gereksinimini simüle edebilir.                          |
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

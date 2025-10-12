@@ -102,6 +102,27 @@ public_spot:
     version: v3
     return_type: dict
 
+  get_avg_price:
+    client: SpotClient
+    method: get_avg_price
+    path: /api/v3/avgPrice
+    http_method: GET
+    signed: false
+    scope: price
+    base: spot
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Get average price for trend/momentum analysis"
+    tags: [public, price, trend]
+    enabled: true
+    version: v3
+    return_type: dict
+
+
+
 public_futures:
   get_mark_price:
     client: FuturesClient
@@ -178,3 +199,193 @@ public_futures:
     enabled: true
     version: v1
     return_type: list
+
+  get_continuous_klines:
+    client: FuturesClient
+    method: get_continuous_klines
+    path: /fapi/v1/continuousKlines
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 15
+    job_type: io
+    purpose: "Fetch continuous futures candlestick data for trend alignment"
+    tags: [public, candles, futures]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_index_price_klines:
+    client: FuturesClient
+    method: get_index_price_klines
+    path: /fapi/v1/indexPriceKlines
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 15
+    job_type: io
+    purpose: "Fetch index price candlestick data for regime and volatility models"
+    tags: [public, candles, futures]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_open_interest_hist:
+    client: FuturesClient
+    method: get_open_interest_hist
+    path: /fapi/v1/openInterestHist
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 20
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 30
+    job_type: io
+    purpose: "Fetch historical open interest data for trend and anomaly detection"
+    tags: [public, futures, open_interest, sentiment]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_long_short_ratio:
+    client: FuturesClient
+    method: get_long_short_ratio
+    path: /fapi/v1/longShortRatio
+    http_method: GET
+    signed: false
+    scope: sentiment
+    base: futures
+    weight: 20
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 30
+    job_type: io
+    purpose: "Retrieve long vs short ratio for sentiment analysis"
+    tags: [public, sentiment, futures]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_taker_long_short_ratio:
+    client: FuturesClient
+    method: get_taker_long_short_ratio
+    path: /fapi/v1/takerlongshortRatio
+    http_method: GET
+    signed: false
+    scope: sentiment
+    base: futures
+    weight: 20
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 30
+    job_type: io
+    purpose: "Retrieve taker buy/sell volume ratios for advanced sentiment"
+    tags: [public, sentiment, futures]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_order_book_depth:
+    client: FuturesClient
+    method: get_order_book_depth
+    path: /fapi/v1/depth
+    http_method: GET
+    signed: false
+    scope: orderbook
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 2
+    job_type: io
+    purpose: "Get order book depth for market microstructure analysis"
+    tags: [public, orderbook, futures]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  get_recent_trades:
+    client: FuturesClient
+    method: get_recent_trades
+    path: /fapi/v1/trades
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 5
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 2
+    job_type: io
+    purpose: "Fetch recent trades for tick-level alpha detection"
+    tags: [public, trades, futures]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_book_ticker_futures:
+    client: FuturesClient
+    method: get_book_ticker_futures
+    path: /fapi/v1/ticker/bookTicker
+    http_method: GET
+    signed: false
+    scope: orderbook
+    base: futures
+    weight: 2
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 3
+    job_type: io
+    purpose: "Get best bid/ask for futures market depth analysis"
+    tags: [public, orderbook, futures]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  get_mark_price_klines:
+    client: FuturesClient
+    method: get_mark_price_klines
+    path: /fapi/v1/markPriceKlines
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 15
+    job_type: io
+    purpose: "Fetch mark price candlestick data for correlation and trend models"
+    tags: [public, candles, mark_price]
+    enabled: true
+    version: v1
+    return_type: list
+
+  get_futures_ticker_price:
+    client: FuturesClient
+    method: get_futures_ticker_price
+    path: /fapi/v1/ticker/price
+    http_method: GET
+    signed: false
+    scope: market
+    base: futures
+    weight: 1
+    rate_limit_type: IP
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Get current futures price for trend and correlation analysis"
+    tags: [public, price, futures]
+    enabled: true
+    version: v1
+    return_type: dict

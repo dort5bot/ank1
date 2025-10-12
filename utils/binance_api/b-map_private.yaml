@@ -197,3 +197,42 @@ private_futures:
     enabled: true
     version: v1
     return_type: dict
+
+
+  get_account_info_futures:
+    client: FuturesClient
+    method: get_account_info
+    path: /fapi/v1/account
+    http_method: GET
+    signed: true
+    scope: account
+    base: futures
+    weight: 5
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Get futures account info including margin, assets, and positions"
+    tags: [private, account, futures]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  get_full_account_data:
+    client: FuturesClient
+    method: get_full_account_data
+    path: /fapi/v2/account
+    http_method: GET
+    signed: true
+    scope: account
+    base: futures
+    weight: 10
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 10
+    job_type: io
+    purpose: "Fetch full account data including margin, positions, and balances"
+    tags: [private, account, futures]
+    enabled: true
+    version: v2
+    return_type: dict
