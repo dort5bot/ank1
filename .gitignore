@@ -1,0 +1,7 @@
+# .gitignore içine ekle
+.env
+*.env.local
+*.env.*.local
+secrets/
+keys/
+certificates/
