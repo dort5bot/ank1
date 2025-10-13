@@ -1,0 +1,393 @@
+# ============================================================
+# analysis_metric_schema.yaml
+# %100 uyumlu sürüm: analysis_schema_manager.py + BaseModuleConfig
+# Her modülün endpoint, komut, metrik, çıktı tipi, amaç, vb. tanımlarını içerir.
+# Yarı-config, yarı-metadata tanımlıdır.
+# ============================================================
+
+modules:
+
+  - name: "Trend & Momentum (TA)"
+    file: "trend_moment.py"
+    config: "c_trend.py"
+    command: "/trend"
+    command_aliases: ["/t"]
+    api_type: "Spot Public"
+    endpoints:
+      - "/api/v3/klines"
+      - "/api/v3/ticker/24hr"
+      - "/api/v3/avgPrice"
+      - "/fapi/v1/continuousKlines"
+    methods: ["GET"]
+
+    job_type: "CPU-bound"
+    parallel_mode: "Batch"
+
+    classical_metrics:
+      - EMA
+      - RSI
+      - MACD
+      - Bollinger Bands
+      - ATR
+      - ADX
+
+    professional_metrics:
+      - { name: "Kalman Filter Trend", priority: "*" }
+      - { name: "Z-Score Normalization", priority: "*" }
+      - { name: "Wavelet Transform", priority: "**" }
+      - { name: "Hilbert Transform Slope", priority: "**" }
+      - { name: "Fractal Dimension Index (FDI)", priority: "***" }
+
+    composite_metrics:
+      - "0.25*MACD_Histogram + 0.20*RSI + 0.20*EMA_21 + 0.15*EMA_9 + 0.10*EMA_50 + 0.10*Kalman_Trend"
+
+    objective: "Fiyat yönü & momentum gücü"
+    output_type: "Trend Score (0–1)"
+    description: "Spot ve futures trend uyumunu ölçer; momentum gücü skorunu üretir."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Piyasa Rejimi (Volatilite & Yapı)"
+    file: "volat_regime.py"
+    config: "c_regime.py"
+    command: "/regime"
+    command_aliases: ["/rg"]
+    api_type: "Spot + Futures Public"
+    endpoints:
+      - "/api/v3/klines"
+      - "/fapi/v1/markPrice"
+      - "/fapi/v1/fundingRate"
+      - "/fapi/v1/premiumIndex"
+      - "/fapi/v1/indexPriceKlines"
+    methods: ["GET"]
+
+    job_type: "CPU-bound"
+    parallel_mode: "Batch"
+
+    classical_metrics:
+      - Historical Volatility (σ)
+      - ATR
+      - Bollinger Width
+      - Variance Ratio Test
+      - Range Expansion Index
+
+    professional_metrics:
+      - { name: "GARCH(1,1)", priority: "*" }
+      - { name: "Entropy Index", priority: "*" }
+      - { name: "Hurst Exponent", priority: "**" }
+      - { name: "Regime Switching Model", priority: "***" }
+
+    composite_metrics:
+      - "0.5*Entropy_Index + 0.3*Hurst_Exponent + 0.2*GARCH_Vol"
+
+    objective: "Trend / Range modu ayrımı"
+    output_type: "Regime Label (Trend, Range)"
+    description: "Volatilite yapısını, implied-realized farklarını ve rejim geçişlerini sınıflandırır."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Derivatives & Sentiment"
+    file: "deriv_sentim.py"
+    config: "c_sentim.py"
+    command: "/sentiment"
+    command_aliases: ["/s"]
+    api_type: "Futures Public"
+    endpoints:
+      - "/fapi/v1/fundingRate"
+      - "/fapi/v1/openInterestHist"
+      - "/fapi/v1/longShortRatio"
+      - "/fapi/v1/liquidationOrders"
+      - "/fapi/v1/takerlongshortRatio"
+    methods: ["GET"]
+
+    job_type: "I/O-bound"
+    parallel_mode: "Async"
+
+    classical_metrics:
+      - Funding Rate
+      - Open Interest (OI)
+      - Long/Short Ratio
+      - OI Change Rate
+      - Funding Rate Skew
+      - Volume Imbalance Index
+
+    professional_metrics:
+      - { name: "Liquidation Heatmap", priority: "*" }
+      - { name: "OI Delta Divergence", priority: "**" }
+      - { name: "Volatility Skew", priority: "**" }
+      - { name: "Gamma Exposure", priority: "***" }
+
+    composite_metrics:
+      - "0.5*FundingRate + 0.3*OI_Change + 0.2*LS_Ratio"
+
+    objective: "Trader positioning & sentiment eğilimi"
+    output_type: "Sentiment Score (-1→1)"
+    description: "Pozisyon, fonlama ve likidasyon verilerinden genel piyasa eğilimini belirler."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Order Flow & Microstructure"
+    file: "order_micros.py"
+    config: "c_flow.py"
+    command: "/flow"
+    command_aliases: ["/f"]
+    api_type: "Futures Public"
+    endpoints:
+      - "/fapi/v1/depth"
+      - "/fapi/v1/trades"
+      - "/fapi/v1/ticker/bookTicker"
+    methods: ["GET"]
+
+    job_type: "Stream + CPU"
+    parallel_mode: "Stream"
+
+    classical_metrics:
+      - Orderbook Imbalance
+      - Spread
+      - Market Buy/Sell Pressure
+      - Trade Aggression Ratio
+      - Slippage
+      - Depth Elasticity
+
+    professional_metrics:
+      - { name: "CVD (Cumulative Volume Delta)", priority: "*" }
+      - { name: "Order Flow Imbalance Index (OFI)", priority: "**" }
+      - { name: "Taker Dominance Ratio", priority: "**" }
+      - { name: "Liquidity Density Map", priority: "***" }
+
+    composite_metrics:
+      - "0.5*CVD + 0.3*OFI + 0.2*Taker_Dominance"
+
+    objective: "Anlık yön & likidite baskısı"
+    output_type: "Liquidity Pressure Score (0–1)"
+    description: "Orderbook ve işlem akışından kısa vadeli yön baskısını çıkarır."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Correlation & Lead-Lag"
+    file: "corr_lead.py"
+    config: "c_corr.py"
+    command: "/corr"
+    command_aliases: ["/c"]
+    api_type: "Spot + Futures Public"
+    endpoints:
+      - "/api/v3/klines (multi-symbol)"
+      - "/fapi/v1/markPriceKlines"
+      - "/api/v3/ticker/price"
+    methods: ["GET"]
+
+    job_type: "CPU + I/O Mixed"
+    parallel_mode: "Batch"
+
+    classical_metrics:
+      - Pearson Corr
+      - Beta
+      - Rolling Covariance
+      - Partial Correlation
+      - Rolling Lead-Lag Delta
+
+    professional_metrics:
+      - { name: "Granger Causality Test", priority: "*" }
+      - { name: "Dynamic Time Warping (DTW)", priority: "*" }
+      - { name: "Canonical Correlation", priority: "**" }
+      - { name: "Vector AutoReg (VAR)", priority: "***" }
+
+    composite_metrics:
+      - "0.4*Granger + 0.3*DTW + 0.3*VAR"
+
+    objective: "Coin’ler arası liderlik & yön takibi"
+    output_type: "Correlation Lead-Lag Matrix"
+    description: "Farklı coinler arasındaki yön bağımlılıklarını ve liderlik etkilerini analiz eder."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "On-Chain & Macro"
+    file: "onchain.py"
+    config: "c_macro.py"
+    command: "/macro"
+    command_aliases: ["/ma"]
+    api_type: "External Public"
+    endpoints:
+      - "Glassnode"
+      - "CryptoQuant"
+      - "Farside"
+      - "Coinglass"
+    methods: ["GET"]
+
+    job_type: "I/O-bound"
+    parallel_mode: "Async"
+
+    classical_metrics:
+      - Stablecoin Flow
+      - CEX Inflow/Outflow
+      - ETF Net Flow
+      - Exchange Net Position Change
+      - Realized Cap
+      - NUPL
+
+    professional_metrics:
+      - { name: "Net Realized Profit/Loss", priority: "*" }
+      - { name: "Exchange Whale Ratio", priority: "*" }
+      - { name: "MVRV Z-Score", priority: "**" }
+      - { name: "SOPR", priority: "***" }
+
+    composite_metrics:
+      - "0.6*ETF_Flow + 0.4*MacroRiskOn"
+
+    objective: "Zincir üstü likidite & makro eğilim"
+    output_type: "Macro Score (0–1)"
+    description: "On-chain akış, ETF ve borsa pozisyon değişimlerinden makro likidite durumu üretir."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Risk & Exposure Management"
+    file: "risk_expos.py"
+    config: "c_risk.py"
+    command: "/risk"
+    command_aliases: ["/r"]
+    api_type: "Spot + Futures Public"
+    endpoints:
+      - "/fapi/v1/liquidationOrders"
+      - "/fapi/v1/premiumIndex"
+      - "/api/v3/klines"
+      - "/fapi/v1/positionRisk"
+    methods: ["GET"]
+
+    job_type: "CPU-bound"
+    parallel_mode: "Batch"
+
+    classical_metrics:
+      - ATR Stop
+      - Liquidation Zones
+      - Max Drawdown
+      - Volatility Targeting
+      - Position Leverage Ratio
+
+    professional_metrics:
+      - { name: "Value-at-Risk (VaR)", priority: "*" }
+      - { name: "Expected Shortfall (CVaR)", priority: "*" }
+      - { name: "Sharpe/Sortino Dynamic", priority: "**" }
+      - { name: "ATR-based Adaptive Stop", priority: "***" }
+
+    composite_metrics:
+      - "0.4*VaR + 0.3*CVaR + 0.3*Sharpe_Dynamic"
+
+    objective: "Risk kontrolü & sinyal güvenliği"
+    output_type: "Risk Score (0–1)"
+    description: "Kaldıraç, volatilite ve zarar limitlerini dinamik risk skoru olarak hesaplar."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Market Micro Alpha"
+    file: "microalpha.py"
+    config: "c_micro.py"
+    command: "/micro"
+    command_aliases: ["/mi"]
+    api_type: "Futures Public (Real-Time)"
+    endpoints:
+      - "/fapi/v1/depth"
+      - "/fapi/v1/trades"
+      - "WebSocket /ws/<symbol>@trade"
+      - "WebSocket /ws/<symbol>@depth@100ms"
+    methods: ["GET", "WebSocket"]
+
+    job_type: "Async"
+    parallel_mode: "Stream"
+
+    classical_metrics:
+      - Tick Volume
+      - Spread
+      - Bid/Ask Imbalance
+      - Trade Direction Ratio
+      - Microprice
+      - Quote Stability Index
+
+    professional_metrics:
+      - { name: "CVD (Cumulative Volume Delta)", priority: "*" }
+      - { name: "Order Flow Imbalance Index (OFI)", priority: "*" }
+      - { name: "Microprice Deviation", priority: "*" }
+      - { name: "Market Impact Model (Kyle’s λ)", priority: "**" }
+      - { name: "Latency Adjusted Flow Ratio", priority: "**" }
+      - { name: "High-Frequency Z-score", priority: "***" }
+
+    composite_metrics:
+      - "0.4*CVD + 0.3*OFI + 0.2*Microprice + 0.1*Kyle"
+
+    objective: "Gerçek zamanlı mikro-yapı yönü ve alpha faktörü üretmek"
+    output_type: "Micro Alpha Score (0–1)"
+    description: "Tick düzeyinde işlem ve likidite yapısından yönsel alpha faktörleri hesaplar."
+    version: "2025.1"
+    maintainer: "ysf"
+  - name: "Portfolio Optimization & Allocation"
+    file: "port_alloc.py"
+    config: "c_portalloc.py"
+    command: "/allocate"
+    command_aliases: ["/al"]
+    api_type: "Private"
+    endpoints:
+      - "/api/v3/account"
+      - "/fapi/v2/balance"
+      - "/fapi/v2/account"
+      - "/fapi/v2/positionRisk"
+      - "/api/v3/klines"
+    methods: ["GET"]
+
+    job_type: "CPU-bound"
+    parallel_mode: "Batch"
+
+    classical_metrics:
+      - Sharpe Ratio
+      - Correlation Matrix
+      - Value-at-Risk (VaR)
+      - Conditional Beta
+      - Sortino Ratio
+      - Drawdown Correlation
+
+    professional_metrics:
+      - { name: "Black-Litterman Model", priority: "*" }
+      - { name: "Hierarchical Risk Parity (HRP)", priority: "**" }
+      - { name: "Risk Parity", priority: "***" }
+
+    composite_metrics:
+      - "0.4*Sharpe + 0.3*Sortino + 0.3*HRP_Weight_Stability"
+
+    objective: "Dinamik portföy optimizasyonu ve risk uyumlu varlık tahsisi"
+    output_type: "Allocation Weights"
+    description: "Portföy volatilitesi, kovaryans ve korelasyon bazlı optimal dağılım hesaplar."
+    version: "2025.1"
+    maintainer: "ysf"
+
+  - name: "Regime Change Detection & Anomaly"
+    file: "regime_anomal.py"
+    command: "/redet"
+    command_aliases: ["/rd"]
+    api_type: "Spot + Futures Public"
+    endpoints:
+      - "/api/v3/klines"
+      - "/fapi/v1/markPrice"
+      - "/fapi/v1/openInterestHist"
+      - "/fapi/v1/fundingRate"
+    methods: ["GET"]
+
+    job_type: "Async"
+    parallel_mode: "Event"
+
+    classical_metrics:
+      - Z-Score
+      - Rolling Mean/Std
+      - Rolling Skewness/Kurtosis
+      - Cumulative Return Deviation
+
+    professional_metrics:
+      - { name: "Changepoint Detection (CUSUM)", priority: "*" }
+      - { name: "Isolation Forest", priority: "**" }
+      - { name: "Spectral Residual", priority: "***" }
+
+    composite_metrics:
+      - "0.5*CUSUM + 0.3*IsolationForest + 0.2*SpectralResidual"
+
+    objective: "Ani rejim değişimlerini ve piyasa anomalilerini tespit etmek"
+    output_type: "Anomaly Score (0–1)"
+    description: "Volatilite, OI ve funding değişimlerine göre rejim dönüşü ve anomali tespit eder."
+    version: "2025.1"
+    maintainer: "ysf"
