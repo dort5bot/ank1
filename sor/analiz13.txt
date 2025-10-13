@@ -1,10 +1,18 @@
 
 =====
 Modül adı -  .py dosya adı -  Config Dosyası - Endpoint(ler) -  API Türü -  eklenecek Zorunlu Klasik Metrikler -  eklenecek Profesyonel Metrikler (öncelik: * yüksek / ** orta / *** düşük) -  Amaç -  Çıktı Türü -  Komut - Metot -  İş Tipi -  Paralel işlem Türü -  Gerekçe / Katkı - 
-B. Piyasa Rejimi (Volatilite & Yapı) -  volat_regime.py -  c_volat.py - /api/v3/klines, /fapi/v1/markPrice, /fapi/v1/fundingRate ➕ /fapi/v1/premiumIndex, /fapi/v1/indexPriceKlines -  Spot + Futures Public -  Historical Volatility, ATR, Bollinger Width + Variance Ratio Test, Range Expansion Index -  *GARCH(1,1), *Entropy Index, **Hurst Exponent, ***Regime Switching Model -  Trend / Range modu ayrımı -  Regime Label (Trend, Range) -  /regime, /rg - GET -  CPU-bound -  Batch -  Volatilite rejimi için implied–realized farkı ve premium yapısı gerek - 
+------
 
 
-=====
+=====*=====*=====*=====
+modül geliştirme için 
+genel yapı:
+
+modülAdı.py + config(gerekiyorsa adı: c_modul.py)
+modülAdı.py : özellikleri yukarıda verildi, metrik hesaplamaları
+config : gerekiyorsa adı: c_modulAdı.py
+
+=====*=====*=====*=====
 modül açıklamas ve verilen bilgilere göre analiz modülüne ait tam çalışan kodu oluştur
 
 mevcut dosya agacı
@@ -13,8 +21,8 @@ analysis/
 │   ├── analysis_core.py           # Ana aggregator
 │   ├── analysis_router.py        # FastAPI router
 │   ├── analysis_schema_manager.py       # Schema yöneticisi
-│   ├──analysis_metric_schema.yaml      # Schema tanımı
-│   ├── trend_moment.py                  # Modül implementasyonları
+│   ├── analysis_metric_schema.yaml      # modüllerin schemaları içerir
+│   ├── volat_regime.py                  # Modül implementasyonları
 │   ├──
 │   ├──config/  #modüller için Hybrid config Yapi
 │   │   ├── base.py
@@ -54,15 +62,6 @@ get_order_book:
 ====
 
 
-modül geliştirme için 
-genel yapı:
-
-modülAdı.py + config(gerekiyorsa adı: c_modul.py) + YAML şeması
-
-modülAdı.py : özellikleri yukarıda verildi, metrik hesaplamaları
-config : gerekiyorsa adı: c_modulAdı.py
-YAML şeması: hazır, verildi
-
 --------
 örnek config:
 # örnek: c_trend.py
@@ -79,7 +78,8 @@ CONFIG = {
 
 
 
-örnek: A. Trend & Momentum (TA) modülü için oluşacak dosyalar
+örnek: 
+A. Trend & Momentum (TA) modülü için oluşacak dosyalar
 modülAdı: trend_moment.py
 config : gerekiyor > c_trend.py
 
