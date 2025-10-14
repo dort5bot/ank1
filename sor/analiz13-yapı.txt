@@ -1,0 +1,328 @@
+trend_moment.py
+=====
+Modül adı -  .py dosya adı -  Config Dosyası - 2025 ile Uyumlu Güncel Endpoint’ler -  Veri kaynağı - API Türü -  eklenecek Zorunlu Klasik Metrikler -  eklenecek Profesyonel Metrikler (öncelik: * yüksek / ** orta / *** düşük) -  Amaç -  Çıktı Türü -  Komut - Metot -  İş Tipi -  Paralel işlem Türü -  Gerekçe / Katkı - 
+
+A. Trend & Momentum (TA) -  trend_moment.py -  c_trend.py - /api/v3/klines, /api/v3/ticker/24hr, /api/v3/avgPrice, /fapi/v1/continuousKlines, /api/v3/ticker/price, /api/v3/ticker/bookTicker, /fapi/v1/klines, WebSocket <symbol>@kline_interval -  utils/binance_api/binance_a içindeki BinanceAggregator class - Spot Public -  EMA, RSI, MACD, Bollinger Bands, ATR + ADX (Directional Index), Stochastic RSI, Momentum Oscillator -  *Kalman Filter Trend, *Z-Score Normalization, **Wavelet Transform, **Hilbert Transform Slope, **Fractal Dimension Index (FDI) -  Fiyat yönü & momentum gücü -  Trend Score (0–1) -  /trend, /t - GET -  CPU-bound -  Batch -  Spot & futures trend uyuşması, daha sağlam momentum skoru - 
+
+
+=====*=====*=====*=====
+modül geliştirme için 
+genel yapı:
+
+modülAdı.py + config(gerekiyorsa adı: c_modul.py)
+modülAdı.py : özellikleri yukarıda verildi, metrik hesaplamaları
+config : gerekiyorsa adı: c_modulAdı.py
+veri kaynağı: binance_a.py
+
+
+------------------------------------
+VERİ KAYNAĞI------------------------
+# utils/binance_api/binance_a.py
+
+
+
+class BinanceAggregator:
+    
+    _instance = None
+    _instance_params = None
+
+    @classmethod
+    def get_instance(cls, base_path: str = None, config: Optional[BinanceConfig] = None):
+        if cls._instance is None:
+            if base_path is None:
+                import os
+                base_path = os.path.dirname(__file__)  # 🎯 YAML'lerin olduğu dizin
+            cls._instance = cls(base_path, config)
+        return cls._instance
+    
+    
+	....
+
+--------
+örnek config:
+# örnek: c_trend.py
+CONFIG = {
+    "window": 100,
+    "ema_periods": [20, 50, 200],
+    "rsi_period": 14,
+    "futures_weight": 0.4,
+    "kalman": {"process_var": 1e-4, "obs_var": 1e-3},
+}
+
+
+=====*=====*=====*=====
+modül açıklamas ve verilen bilgilere göre analiz modülüne ait tam çalışan kodu oluştur
+mevcut dosya agacı
+analysis/
+│   ├── analysis_base_module.py      #
+│   ├── analysis_core.py           # Ana aggregator
+│   ├── analysis_router.py        # FastAPI router
+│   ├── analysis_schema_manager.py       # Schema yöneticisi
+│   ├── analysis_metric_schema.yaml      # modüllerin schemaları içerir
+│   ├── volat_regime.py                  # Modül implementasyonları
+│   ├──
+│   ├──config/  #modüller için Hybrid config Yapi
+│   │   ├── base.py
+│   │   ├── loader.py
+│   │   ├── c_volat.py
+│	...
+├── utils
+│   │   ├── binance_a.py	# Ana aggregator
+│   │...
+│   ├── data_sources
+│   │   ├── __init__.py
+│   │   ├── base_client.py
+│   │   ├── cryptoquant_client.py
+│   │   ├── data_provider.py	#agredator
+│   │   ├── example_handlers.py
+│   │   ├── farside_scraper.py
+│   │   ├── glassnode_client.py
+│   │   └── README.md
+--------
+
+
+
+
+
+örnek: 
+A. Trend & Momentum (TA) modülü için oluşacak dosyalar
+modülAdı: trend_moment.py
+config : gerekiyor > c_trend.py
+
+---
+kontrol listesi 
+---
+ön hedef:
+class tabanlı (BaseAnalysisModule),
+config tabanlı (configTrend.py),
+async & batch uyumlu,
+skorlaması açıklanabilir,
+doğru metrik formülleri,
+vektörize edilmiş,
+kalibrasyon, threshold, explain alanı,
+Prometheus / metric wrapper’ları ile uyumlu şekilde tasarlanan modüller
+
+🧱 1️⃣ Yapısal Tutarlılık (Structure & Naming)
+Amaç: Kod okunabilirliği, modüller arası standardizasyon.
+✅ Metrik isimlendirmeleri tutarlı (ör. ema, rsi, macd_hist, kalman_trend).
+✅ Class tabanlı yapı mevcut (class TrendModule(BaseAnalysisModule): ...).
+Interface/Abstract Base Class kullanımı
+✅ Her modül aynı temel fonksiyon imzasına sahip:
+compute_metrics()
+aggregate_output()
+generate_report()
+
+✅ Modül başına gerekiyorsa ayrı config dosyası:
+✅ Birden fazla sembol aynı anda analiz edilebilir (multi-symbol loop veya batch job destekli).
+✅ Paralel yapı türü (Batch / Async / Stream) tanımlanmış.
+Öneri: Modül yaşam döngüsü ekleyelim
+lifecycle:
+development: [trend, volatility, sentiment]
+testing: [mean_reversion]
+production: [momentum, volume]
+deprecated: [old_trend_v1]
+Öneri: Factory pattern ile modül yönetimi
+class ModuleFactory:
+@classmethod
+def create_module(cls, module_name: str, config: Dict) -> BaseAnalysisModule:
+    modules = {
+        "trend": TrendModule,
+        "volatility": VolatilityModule,
+        "sentiment": SentimentModule
+    }
+    return modules[module_name](config)
+---
+
+⚙️ 2️⃣ Hesaplama Kalitesi & Metrik Güvenirliği
+Amaç: Hesaplanan metriklerin akademik/istatistiksel olarak doğru olması.
+✅ Metrikler doğru formülle hesaplanıyor (ör. RSI = 100 - 100/(1+RS)).
+✅ Parametrik config değerleri doğru kullanılıyor (ör. EMA period, Bollinger window).
+✅ Hesaplanan metriklerin gerçek ve kullanılabilir değer aralıkları var.
+✅ Numpy/pandas ile vektörize edilmiş hesaplamalar — for döngüleri minimize edilmiş.
+✅ İleri metrikler için uygun kütüphaneler kullanılmış:
+pykalman → Kalman Filter
+pywt → Wavelet
+scipy.signal → Hilbert / detrend
+✅ Metric dependency graph mevcut (ör. RSI, EMA’ya bağlıysa önce EMA hesaplanır).
+Metrik hesaplamaları için @validate_inputs gibi bir decorator kullanılabilir.
+📘 Ek öneri:
+DAG (Directed Acyclic Graph) yapısı networkx veya internal dependency resolver ile yönetilebilir.
+---
+⚖️ 3️⃣ Skorlama, Normalizasyon & Explainability
+Amaç: Modülün ürettiği skoru anlamlandırılabilir, açıklanabilir hale getirmek.
+✅ Skorlama formülü açıkça tanımlı (ör. trend_score = w1*EMA + w2*RSI + ...).
+✅ Ağırlıklar config içinde (weights = {"ema":0.2, "rsi":0.2, "macd":0.3, ...}).
+✅ Normalize işlemi (Z-Score, Min-Max veya Percentile) uygulanmış.
+✅ explain alanı döndürülüyor:
+{
+  "score": 0.82,
+  "components": {"ema": 0.3, "rsi": 0.25, "macd": 0.27},
+  "signal": "strong_uptrend"
+}
+✅ Threshold & uyarı sistemi:
+score > 0.7 → "bullish", score < 0.3 → "bearish", aksi “neutral”.
+✅ Opsiyonel: Kalibrasyon (rolling z-score veya exponentially weighted scaling).
+Shapley değeri veya permutation importance gibi metodlar opsiyonel explainability katmanları olarak eklenebilir
+📘 Ek öneri:
+Explain alanı hem telemetry (analiz_core için) hem rapor üretimi (generate_report) için kullanılabilir.
+---
+🚀 4️⃣ Performans & Paralel İşleme Modeli
+Amaç: Çoklu sembolde yüksek performans, düşük gecikme.
+✅ CPU-bound işlemler (Kalman, GARCH) → ThreadPool / ProcessPool.
+✅ IO-bound işlemler (API fetch, WebSocket) → AsyncIO.
+✅ Stream modüllerinde sürekli async iterator (async for) yapısı.
+✅ Vectorization ve caching aktif.
+✅ Rate-limit handling (Binance API → backoff, retry).
+✅ Resource cleanup: context manager (with yapısı veya async context).
+✅ Cache TTL (ör. Redis veya internal LRU cache) tanımlı.
+asyncio.TaskGroup (Python 3.11+) kullanımı önerilebilir, daha modern ve kontrol edilebilir.
+Opsiyonel: joblib veya ray gibi paralel işlem motorları desteklenebilir.
+📘 Ek öneri:
+CacheManager sınıfı ortak utils içine alınsın:
+from utils.cache import cache_result(ttl=60)
+@cache_result(ttl=120)
+def compute_metrics(...):
+    ...
+---
+🧩 5️⃣ Dokümantasyon & Validation
+Amaç: Modülün nasıl çalıştığı, hangi metrikleri kullandığı açıkça görülebilsin.
+Kontrol Maddeleri:
+✅ Her modülün başında docstring:
+"""Trend & Momentum Analysis
+Metrikler: EMA, RSI, MACD, Kalman
+
+"""
+✅ Formül açıklamaları (formula.md veya inline docstring içinde).
+✅ Config parametreleri açıklanmış (configTrend içinde param_descriptions dict).
+
+🧠 6️⃣ İleri Katmanlar (Opsiyonel ama güçlü)
+Amaç: Profesyonel seviye ölçeklenebilirlik ve izlenebilirlik.
+Kontrol Maddeleri:
+✅ Metric Dependency Graph (DAG) otomatik çözülüyor.
+✅ Modül bağımlılıkları schema içinde tanımlı.
+✅ Loglama sistemi (logging_config.yaml) ile her metrik ayrı loglanabiliyor.
+✅ Opsiyonel: Prometheus / Grafana entegrasyonu (metric_export).
+✅ AsyncIO + ThreadPool mix (CPU + IO hibrit).
+✅ Versiyonlama: version = "1.0.0" modül başında belirtilmiş.
+---
+Hata Yönetimi ve Robustness
+Öneri: Graceful degradation pattern
+class CircuitBreaker:
+def __init__(self, failure_threshold=5, timeout=60):
+    self.failure_count = 0
+    self.failure_threshold = failure_threshold
+async def execute_with_fallback(self, operation, fallback_operation):
+    try:
+        if self.failure_count < self.failure_threshold:
+            result = await operation()
+            self.failure_count = 0
+            return result
+    except Exception as e:
+        self.failure_count += 1
+        logger.warning(f"Circuit breaker triggered: {e}")
+        return await fallback_operation()
+
+Öneri: Modül performans metrikleri
+class ModuleMetrics:
+def __init__(self):
+    self.execution_time = Gauge('module_execution_seconds', 'Execution time per module')
+    self.success_count = Counter('module_success_total', 'Successful executions')
+    self.error_count = Counter('module_errors_total', 'Execution errors')
+def track_performance(self, module_name: str):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            start_time = time.time()
+            try:
+                result = await func(*args, **kwargs)
+                self.success_count.labels(module=module_name).inc()
+                return result
+            except Exception:
+                self.error_count.labels(module=module_name).inc()
+                raise
+            finally:
+                self.execution_time.labels(module=module_name).set(time.time() - start_time)
+        return wrapper
+    return decorator
+Config Validation ve Schema
+Öneri: Pydantic ile config validation
+from pydantic import BaseModel, validator
+from typing import List, Dict, Optional
+class ModuleConfig(BaseModel):
+module_name: str
+version: str
+parameters: Dict
+weights: Dict[str, float]
+thresholds: Dict[str, float]
+@validator('weights')
+def validate_weights(cls, v):
+    total = sum(v.values())
+    if not 0.99 <= total <= 1.01:  # Allow small floating point errors
+        raise ValueError(f'Weights must sum to 1.0, got {total}')
+    return v
+@validator('thresholds')
+def validate_thresholds(cls, v, values):
+    if 'bullish_threshold' in v and 'bearish_threshold' in v:
+        if v['bullish_threshold'] <= v['bearish_threshold']:
+            raise ValueError('Bullish threshold must be greater than bearish threshold')
+    return v
+Dependency Injection ve Testing
+Öneri: Dependency injection for better testing
+class AnalysisModule:
+def __init__(self, 
+             data_provider: DataProviderInterface,
+             cache_client: CacheInterface,
+             metrics_collector: MetricsInterface):
+    self.data_provider = data_provider
+    self.cache = cache_client
+    self.metrics = metrics_collector
+Mock implementations for testing
+class MockDataProvider:
+async def get_ohlcv(self, symbol: str, interval: str) -> pd.DataFrame:
+    return generate_test_data()  # Deterministic test data
+	
+7. Güvenlik ve Veri Bütünlüğü
+✅ Input validation ve sanitization
+✅ API key management (environment variables, vault)
+✅ Rate limiting ve quota management
+✅ Data integrity checks (checksum, signature verification)
+
+8. Backtesting ve Historical Validation
+✅ Historical accuracy testing
+✅ Walk-forward analysis capability
+✅ Benchmark comparison (vs buy-and-hold)
+✅ Drawdown and risk metrics
+
+9. Deployment ve DevOps
+✅ Containerization (Dfile)
+✅ Health check endpoints
+✅ Configuration management (feature flags)
+✅ Rolling update capability
+
+10 özet--
+✅ UYUM İÇİN GEREKEN KRİTERLER
+Bir modülün mevcut sistemle uyumlu olması için:
+1. Zorunlu Fonksiyonlar:
+run(symbol, priority) fonksiyonu (backward compatibility)
+VEYA BaseAnalysisModule'den türeyen class
+2. Config Yapısı: modüle göre gerekiyorsa
+c_ModülAdı.py dosyası
+CONFIG değişkeni ile export
+3. Schema Eşleme:
+analysis_metric_schema.yaml'de tanımlı
+Yeni alanlar (lifecycle, parallel_mode, vs.)
+4. Output Formatı:
+score, signal, components, explain alanları
+Standardize edilmiş skor aralığı (0-1)
+5. Error Handling:
+Circuit breaker pattern
+Graceful degradation
+🔖 Sonuç — Gruplandırılmış Nihai Kontrol Listesi
+Sonuç — Gruplandırılmış Nihai Kontrol Listesi
+Grup
+🧱 Yapısal Tutarlılık
+⚙️ Hesaplama Kalitesi
+⚖️ Skorlama & Explainability
+🚀 Performans
+🧩 Dokümantasyon & Test
+🧠 İleri Katmanlar

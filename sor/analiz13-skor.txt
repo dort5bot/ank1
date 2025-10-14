@@ -1,0 +1,158 @@
+modüler şekilde yapılandırılmış bir analiz dosyaları var. 
+bunlar agredator yapıdaki 
+ile çağrılabiliyor.
+
+
+Her modül kendi içinde farklı metrikler ve sinyaller üretiyor
+bunların bazıları **birleştirilerek bileşik skorlar (composite score)** üretilebilir mi
+
+Aşağıda **bileşik skor üretimi için önerilebilecek bazı kombinasyonlar** yer alıyor. 
+Her bir skorun adı, hangi modüllerden oluştuğu ve hangi amacı taşıdığı detaylı şekilde verilmiştir.
+
+BUNLARI İNCELE ANLAMLI MI,
+ÖNERİN TAVSİYEN VAR MI
+---
+
+### 🔴 1. **Trend Strength Score**
+
+**Amaç:** Fiyat yönü ve momentum gücünü daha sağlam ölçmek
+**Modüller:**
+
+* A. Trend & Momentum
+* B. Piyasa Rejimi
+* C. Derivatives & Sentiment
+* D. Order Flow & Microstructure
+
+**Gerekçe:**
+
+* A: Fiyatın teknik yönü
+* B: Rejim analizi → trend mi, range mi?
+* C: Trader'ların pozisyonu
+* D: Gerçek zamanlı alım-satım baskısı
+
+**Skor Adı:** `trend_strength_score` (0-1 arası)
+
+---
+
+### 🟡 2. **Buy Opportunity Score (elma)**
+
+**Amaç:** Potansiyel alım fırsatlarını belirlemek (teknik + duyarlılık temelli)
+**Modüller:**
+
+* A. Trend & Momentum
+* C. Derivatives & Sentiment
+* D. Order Flow
+* E. Korelasyon & Lead-Lag
+
+**Gerekçe:**
+
+* A: Trend ve momentumun yönü
+* C: Sentiment olumlu mu?
+* D: Gerçek zamanlı alım baskısı var mı?
+* E: Lider coinler ile korelasyon pozitif mi?
+
+**Skor Adı:** `buy_opportunity_score` (0–1)
+
+---
+
+### 🟠 3. **Risk Exposure Score (armut)**
+
+**Amaç:** Mevcut durumda pozisyon almak ne kadar riskli?
+**Modüller:**
+
+* B. Piyasa Rejimi
+* F. On-Chain & Makro
+* G. Risk & Exposure
+* J. Regime Change Detection
+
+**Gerekçe:**
+
+* B: Volatilite yüksek mi?
+* F: Zincir üstü çıkışlar / ETF çıkışları var mı?
+* G: Mevcut pozisyonların risk seviyesi
+* J: Rejimsel değişiklik / anomali sinyali var mı?
+
+**Skor Adı:** `risk_exposure_score` (0–1, 1 = yüksek risk)
+
+---
+
+### 🟢 4. **Macro + Sentiment Composite Score**
+
+**Amaç:** Orta–uzun vadeli yön ve eğilim (duyarlılık + makro birleşimi)
+**Modüller:**
+
+* C. Derivatives & Sentiment
+* F. On-Chain & Makro
+* E. Korelasyon & Lead-Lag
+
+**Skor Adı:** `macro_sentiment_score`
+
+---
+
+### 🔵 5. **Liquidity Pressure Index**
+
+**Amaç:** Gerçek zamanlı likidite ve hacim baskısını ölçmek
+**Modüller:**
+
+* D. Order Flow & Microstructure
+* H. Market Micro Alpha
+
+**Gerekçe:**
+
+* D: Emir defteri dengesi, alım/satım baskısı
+* H: Tick seviyesinde mikro alpha faktörleri
+
+**Skor Adı:** `liquidity_pressure_index` (0–1)
+
+---
+
+### ⚫ 6. **Portfolio Optimization Signal**
+
+**Amaç:** Varlık ağırlıklarının optimize edilmesi
+**Modüller:**
+
+* I. Portfolio Optimization
+* E. Korelasyon & Lead-Lag
+* G. Risk & Exposure
+
+**Skor Adı:** `optimal_allocation_weights` (dizi, örn: {BTC: 0.3, ETH: 0.2...})
+
+---
+
+### ⚪ 7. **Anomaly Detection Alert Score**
+
+**Amaç:** Beklenmedik durumlar, ani değişimler
+**Modüller:**
+
+* J. Regime Change Detection
+* C. Derivatives & Sentiment
+* G. Risk & Exposure
+
+**Skor Adı:** `anomaly_alert_score` (0–1)
+
+---
+
+## 🔄 Bileşik Skorlar İçin Yöntem Önerisi
+
+Skorları birleştirirken aşağıdaki yöntemler kullanılabilir:
+
+* **Normalize Edilmiş Ortalama** (z-score veya min-max normalizasyonu)
+* **Ağırlıklı Ortalama:** Önceliklendirmeye göre (örn. Trend daha ağır basıyorsa `0.4*A + 0.3*C + 0.2*D + 0.1*E`)
+* **PCA / Feature Reduction:** İstatistiksel yaklaşım (gerekirse)
+* **Model Tabanlı Ensemble:** (örneğin bir sinyal makinesi)
+
+---
+
+## ❓ Örnek API Komutları
+
+```bash
+GET /composite/trend_strength?symbol=BTCUSDT
+GET /composite/risk_exposure?symbol=BTCUSDT
+GET /composite/buy_opportunity?symbol=BTCUSDT
+GET /composite/liquidity_pressure?symbol=BTCUSDT
+GET /composite/optimal_allocation
+```
+
+---
+
+İsterseniz bu bileşik skorlar için örnek bir Python kod yapısı da oluşturabilirim. İlginizi çeker mi?
