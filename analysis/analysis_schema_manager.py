@@ -1,49 +1,20 @@
 # analysis_schema_manager.py  yükleyici yapısına bire bir uyumlu bir şema tanımlar ve yükleyiciyi içerir
-"""
-analiz modüllerini merkezi olarak tanımlama, yükleme, filtreleme ve çalıştırma yapar
-Sorumluluk: YAML şemasını yükleme, validasyon, filtreleme işlemleri
-Neden ayrı?: Data access layer pattern - veri erişim mantığını soyutlama
-Avantaj: Router ve core modüllerinden bağımsız çalışabilir
-
-| Özellik                      | Açıklama                                             |
-| ---------------------------- | ---------------------------------------------------- |
-| 🧩 Tam `pydantic` uyumu      | `analysis_metric_schema.yaml` ile birebir eşleşir            |
-| 🎛️ `priority` filtresi      | `*`, `**`, `***` seviyelerinde filtreleme fonksiyonu |
-| 🚀 Kullanıcı seviyesi seçimi | "basic", "pro", "expert" gibi user level uyarlaması  |
-| 🔍 Modül & metrik arama      | Komut, dosya ya da isimle modül bulma                |
-| 🧪 Gelişmiş test örneği      | Modül & metrikleri filtreleyerek yazdırır            |
-| 🧠 Genişletmeye hazır yapı   | API, CLI, UI ya da test framework için uygun         |
-
-Analizleri özelleştirebilirsin
-GET /regime → default (tümü)
-GET /regime?priority=* → sadece hızlı/temel
-GET /regime?priority=*** → yalnızca ileri düzey
-
-⚙️ GEREKSİNİM
-
-Her analiz modül dosyasında (örneğin tremo.py) şu fonksiyon tanımlı olmalı:
-
-# örnek: analysis/tremo.py
-async def run(symbol: str, priority: Optional[str] = None) -> dict:
-    return {"score": 0.74, "symbol": symbol, "priority": priority}
-
-
-Bu işlevin symbol ve priority parametresini alması gerekiyor.
-
-"""
-# schema_manage.py
 # Geliştirilmiş versiyon: priority filtresi + kullanıcı seviyesi desteği + modül/metrik arama
 
 
 from enum import Enum
-from typing import Dict, Any, List, Optional, Literal, Union
+from typing import Dict, Any, List, Optional, Literal, Union, Callable
 from pydantic import BaseModel
 import yaml
 import importlib.util
 import os
+from analysis.base_module import BaseAnalysisModule
+
+# Global analiz klasör yolu
+ANALYSIS_BASE_PATH = os.path.join(os.getcwd(), "analysis")
+
 
 # --- Şema Tanımları ---
-
 PriorityLevel = Literal["*", "**", "***"]
 
 class ModuleLifecycle(str, Enum):
@@ -205,40 +176,66 @@ def get_module_dependencies(schema: AnalysisSchema, module_name: str) -> List[st
 
 # her analiz modül dosyasının içinden run() fonksiyonunu otomatik yükler.
 # analysis_schema_manager.py - Yükleyici 
-def load_module_run_function(module_file: str):
+# analysis/analysis_schema_manager.py
+# ============================================================
+# Modül: Schema + Dynamic Loader
+# Standart: Mutlak yol çözümü, class/fonksiyon destekli yükleme
+# ============================================================
+
+
+# Global analiz klasör yoluna göre işlemler
+def resolve_module_path(module_file: str) -> str:
     """
-    Geliştirilmiş modül yükleyici - hem class hem function destekler
+    Normalize edilmiş mutlak dosya yolu döndürür.
+    Yalnızca dosya adı verilmişse analysis klasörü altından çözer.
     """
-    module_path = os.path.join("analysis", module_file)
-    module_name = module_file.replace(".py", "")
+    module_file = os.path.basename(module_file.strip())
+    module_path = os.path.join(ANALYSIS_BASE_PATH, module_file)
+
+    if not os.path.exists(module_path):
+        raise FileNotFoundError(f"Module not found: {module_path}")
+
+    return module_path
+
+
+def load_module_run_function(module_file: str) -> Callable:
+    """
+    Geliştirilmiş modül yükleyici — hem BaseAnalysisModule class'ı
+    hem legacy run() fonksiyonunu destekler.
+    """
+    module_path = resolve_module_path(module_file)
+    module_name = os.path.splitext(os.path.basename(module_file))[0]
 
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if not spec or not spec.loader:
         raise ImportError(f"Modül yüklenemedi: {module_file}")
-    
+
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    # Önce run fonksiyonunu ara (backward compatibility)
+    # 1️⃣ Legacy run() fonksiyonu
     if hasattr(mod, "run"):
         return mod.run
-    
-    # Sonra BaseAnalysisModule'dan türeyen class'ı ara
+
+    # 2️⃣ BaseAnalysisModule’dan türeyen sınıf
     for attr_name in dir(mod):
         attr = getattr(mod, attr_name)
-        if (isinstance(attr, type) and 
-            issubclass(attr, BaseAnalysisModule) and 
-            attr != BaseAnalysisModule):
+        if (isinstance(attr, type)
+            and issubclass(attr, BaseAnalysisModule)
+            and attr != BaseAnalysisModule):
             
-            # Class bulundu, run methodunu wrap et
             async def run_wrapper(symbol: str, priority: Optional[str] = None):
                 instance = attr()
                 return await instance.compute_metrics(symbol, priority)
             
             return run_wrapper
 
-    raise AttributeError(f"{module_file} içinde 'run()' fonksiyonu veya BaseAnalysisModule class'ı bulunamadı.")
-    
+    raise AttributeError(
+        f"{module_file} içinde 'run()' fonksiyonu veya BaseAnalysisModule class'ı bulunamadı."
+    )
+
+
+
 
 # --- Kullanıcı Seviyesi Filtresi ---
 
@@ -295,5 +292,35 @@ if __name__ == "__main__":
 | 📊 UI menü                 | Streamlit/Dash için menüleri `priority` bazlı oluştururum   |
 | 🧠 Sınıf Tabanlı Yorumlama | Her modüle özel analiz sınıfı oluşturma mantığını eklerim   |
 
+
+analiz modüllerini merkezi olarak tanımlama, yükleme, filtreleme ve çalıştırma yapar
+Sorumluluk: YAML şemasını yükleme, validasyon, filtreleme işlemleri
+Neden ayrı?: Data access layer pattern - veri erişim mantığını soyutlama
+Avantaj: Router ve core modüllerinden bağımsız çalışabilir
+
+| Özellik                      | Açıklama                                             |
+| ---------------------------- | ---------------------------------------------------- |
+| 🧩 Tam `pydantic` uyumu      | `analysis_metric_schema.yaml` ile birebir eşleşir            |
+| 🎛️ `priority` filtresi      | `*`, `**`, `***` seviyelerinde filtreleme fonksiyonu |
+| 🚀 Kullanıcı seviyesi seçimi | "basic", "pro", "expert" gibi user level uyarlaması  |
+| 🔍 Modül & metrik arama      | Komut, dosya ya da isimle modül bulma                |
+| 🧪 Gelişmiş test örneği      | Modül & metrikleri filtreleyerek yazdırır            |
+| 🧠 Genişletmeye hazır yapı   | API, CLI, UI ya da test framework için uygun         |
+
+Analizleri özelleştirebilirsin
+GET /regime → default (tümü)
+GET /regime?priority=* → sadece hızlı/temel
+GET /regime?priority=*** → yalnızca ileri düzey
+
+⚙️ GEREKSİNİM
+
+Her analiz modül dosyasında (örneğin tremo.py) şu fonksiyon tanımlı olmalı:
+
+# örnek: analysis/tremo.py
+async def run(symbol: str, priority: Optional[str] = None) -> dict:
+    return {"score": 0.74, "symbol": symbol, "priority": priority}
+
+
+Bu işlevin symbol ve priority parametresini alması gerekiyor.
 
 """

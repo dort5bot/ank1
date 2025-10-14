@@ -15,19 +15,30 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+
+# analysis_base_module.py'ye eklenmeli
+@cache_result(ttl=60, maxsize=1000)
+async def _fetch_ohlcv_data(self, symbol: str, interval: str = "1h", limit: int = 100):
+    # Cache decorator ile performans artışı
+    pass
+
+
 class BaseAnalysisModule(ABC):
     """Analiz modülleri için abstract base class"""
     
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        # default config safe
+        self.config = config or {}
         self.module_name = self.__class__.__name__
         self.version = getattr(self, 'version', "1.0.0")
         self.dependencies: List[str] = getattr(self, 'dependencies', [])
-        
         # Performance tracking
         self._execution_times: List[float] = []
         self._success_count: int = 0
         self._error_count: int = 0
+
+    
+    
     
     @abstractmethod
     async def compute_metrics(self, symbol: str, priority: Optional[str] = None) -> Dict[str, Any]:

@@ -5,6 +5,14 @@
 # Yarı-config, yarı-metadata tanımlıdır.
 # ============================================================
 
+meta:
+  source: Binance
+  version: "2025.1"
+  last_updated: "2025-10-10"
+  maintainer: "ysf-bot-framework"
+  schema_version: 1.2
+  description: "Binance private REST API endpoints for trading, balance, risk, and portfolio management."
+
 modules:
 
   - name: "Trend & Momentum (TA)"
@@ -206,11 +214,11 @@ modules:
     config: "c_macro.py"
     command: "/macro"
     command_aliases: ["/ma"]
-    api_type: "External Public"
+    api_type: "External + Binance Hybrid"
     endpoints:
+      - "/api/v3/klines"
+      - "/fapi/v1/fundingRate"
       - "Glassnode"
-      - "CryptoQuant"
-      - "Farside"
       - "Coinglass"
     methods: ["GET"]
 
@@ -236,9 +244,11 @@ modules:
 
     objective: "Zincir üstü likidite & makro eğilim"
     output_type: "Macro Score (0–1)"
-    description: "On-chain akış, ETF ve borsa pozisyon değişimlerinden makro likidite durumu üretir."
+    description: "Binance funding + zincir üstü akış verilerini birleştirerek makro likidite durumu üretir."
     version: "2025.1"
     maintainer: "ysf"
+
+    
 
   - name: "Risk & Exposure Management"
     file: "risk_expos.py"
