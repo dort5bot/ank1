@@ -98,6 +98,17 @@ class AdvancedPerformanceMonitor(PerformanceMonitor):
         }
 
 
+# utils/performance_monitor.py'ye ekle
+class AnalysisPerformanceMonitor:
+    async def track_metrics(self):
+        return {
+            "request_latency": self._get_avg_latency(),
+            "cache_hit_rate": self._cache_hits / max(1, self._cache_hits + self._cache_misses),
+            "error_rate": self._error_count / max(1, self._success_count + self._error_count),
+            "concurrent_operations": len(self._active_operations)
+        }
+
+
 def monitor_performance(func_name: Optional[str] = None, warning_threshold: float = 2.0):
     """
     Performance monitoring decorator for async functions
