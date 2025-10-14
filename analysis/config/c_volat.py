@@ -3,7 +3,7 @@ Config for Volatility & Regime module
 File: analysis/config/c_volat.py
 """
 
-CONFIG = {
+VolatilityConfig = {
     # data windowing
     "ohlcv_limit": 500,
     "annualization": 365,            # for HV (daily basis)
