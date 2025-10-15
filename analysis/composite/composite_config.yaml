@@ -1,0 +1,55 @@
+# analysis/composite/composite_config.yaml
+# Config Yönetimi
+
+# Bileşik Skor Konfigürasyonu
+composite_scores:
+  trend_strength:
+    description: "Trend yönü ve momentum gücü ölçümü"
+    modules:
+      - trend_moment
+      - regime_anomal
+      - deriv_sentim
+      - order_micros
+    weights:
+      trend_moment: 0.35    # A: Trend & Momentum
+      regime_anomal: 0.25   # B: Piyasa Rejimi  
+      deriv_sentim: 0.20    # C: Derivatives & Sentiment
+      order_micros: 0.20    # D: Order Flow & Microstructure
+    thresholds:
+      strong_bullish: 0.7
+      weak_bullish: 0.55
+      neutral: 0.45
+      weak_bearish: 0.3
+      strong_bearish: 0.1
+    metadata:
+      purpose: "Fiyat yönü ve momentum gücünü ölçmek"
+      timeframe: "1-4 saat"
+      output_range: "0-1"
+
+  risk_exposure:
+    description: "Pozisyon risk seviyesi ölçümü"
+    modules:
+      - regime_anomal
+      - onchain
+      - risk_expos
+    weights:
+      regime_anomal: 0.30
+      onchain: 0.25
+      risk_expos: 0.30
+    thresholds:
+      low_risk: 0.3
+      medium_risk: 0.5
+      high_risk: 0.7
+
+  buy_opportunity:
+    description: "Alım fırsatı skoru"
+    modules:
+      - trend_moment
+      - deriv_sentim
+      - order_micros
+      - corr_lead
+    weights:
+      trend_moment: 0.30
+      deriv_sentim: 0.25
+      order_micros: 0.25
+      corr_lead: 0.20
