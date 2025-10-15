@@ -24,6 +24,7 @@ from .analysis_schema_manager import (
 
 from .analysis_base_module import BaseAnalysisModule
 from .analysis_base_module import legacy_compatible
+from analysis.composite.composite_engine import CompositeScoreEngine
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -96,6 +97,9 @@ class AnalysisAggregator:
         self._module_instances: Dict[str, Any] = {}
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         
+        # birleşik skorlar
+        self.composite_engine = CompositeScoreEngine(self)
+        
         self._initialized = True
         logger.info("AnalysisAggregator initialized successfully")
 
@@ -136,11 +140,20 @@ class AnalysisAggregator:
 
     
 
-    def _get_cache_key(self, symbol: str, module_name: str, priority: Optional[str] = None) -> str:
-        """Modül + sembol bazlı sabit cache anahtarı"""
+    def _get_cache_key(
+        self, 
+        symbol: str, 
+        module_name: str, 
+        priority: Optional[str] = None, 
+        user_id: Optional[str] = None
+    ) -> str:
+        """Sembol + modül + öncelik + kullanıcı bazlı cache anahtarı üretir"""
         normalized_name = os.path.splitext(os.path.basename(module_name))[0].lower()
-        key_string = f"{symbol.upper()}:{normalized_name}:{priority or 'default'}"
+        # Güvenli string: None değerlerini 'unknown' veya 'anon' olarak fallback yapar
+        key_string = f"{(symbol or 'unknown').upper()}:{normalized_name}:{priority or 'default'}:{user_id or 'anon'}"
         return hashlib.md5(key_string.encode()).hexdigest()
+
+
 
 
 
@@ -156,6 +169,13 @@ class AnalysisAggregator:
         self._cache_misses += 1
         try:
             resolved_path = resolve_module_path(module_file)
+            
+            # ✅ Güvenli modül yolu kontrolü
+            allowed_prefix = os.path.abspath("analysis/modules/")
+            if not resolved_path.startswith(allowed_prefix):
+                raise PermissionError(f"Unauthorized module path: {resolved_path}")
+
+            
             run_function = load_module_run_function(resolved_path)
             self._module_cache[cache_key] = run_function
             return run_function
@@ -278,6 +298,14 @@ class AnalysisAggregator:
             self.schema = load_analysis_schema()
         
         start = time.time()
+        
+        # ✅ Eşzamanlı çalışan görevleri sınırla
+        sem = asyncio.Semaphore(6)
+        async def safe_run(m):
+            async with sem:
+                return await self.run_single_analysis(m, symbol, priority)
+
+        # Tüm modülleri güvenli şekilde sıraya koy
         tasks = [self.run_single_analysis(m, symbol, priority) for m in self.schema.modules]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -297,42 +325,61 @@ class AnalysisAggregator:
         )
 
 
+    # birleşik
+    # analysis_core.py (mevcut aggregator)
+    async def get_comprehensive_analysis(self, symbol: str):
+        # Mevcut modül analizleri
+        module_results = await self.run_all_analyses(symbol)
+        
+        # Bileşik skorlar
+        composite_scores = await self.composite_engine.calculate_composite_scores(symbol)
+        
+        return {
+            'symbol': symbol,
+            'module_analyses': module_results,
+            'composite_scores': composite_scores['composite_scores'],
+            'summary': self._generate_summary(composite_scores),
+            'timestamp': composite_scores['timestamp']
+        }
+    
+    async def get_trend_strength(self, symbol: str):
+        """Sadece trend strength skoru al"""
+        return await self.composite_engine.calculate_single_score('trend_strength', symbol)
 
+    
+    #
     async def _periodic_cleanup(self):
         """Geliştirilmiş resource cleanup"""
         import gc
 
         while self._is_running:
             try:
-                await asyncio.sleep(300)  # 5 dakikada bir çalışır
+                await asyncio.sleep(300)
 
                 current_time = time.time()
 
-                # Result cache cleanup (10 dakikadan eskiyse sil)
+                # Result cache cleanup
                 for key in list(self._result_cache.keys()):
                     result = self._result_cache[key]
                     if current_time - result.created_at > 600:
                         del self._result_cache[key]
 
-                # Module instance cleanup (schema'da tanımlı değilse sil)
-                 valid_module_keys = [
-                    os.path.splitext(os.path.basename(m.file))[0].lower()
-                    for m in self.schema.modules
-                ]
+                # Module instance cleanup - SYNTAX HATASI DÜZELTİLDİ
+                if self.schema:  # schema kontrolü eklendi
+                    valid_module_keys = [
+                        self._get_module_instance_key(m.file)
+                        for m in self.schema.modules
+                    ]
 
-                for module_name in list(self._module_instances.keys()):
-                    normalized_key = os.path.splitext(os.path.basename(module_name))[0].lower()
-                    if normalized_key not in valid_module_keys:
-                        del self._module_instances[module_name]
-                               
+                    for module_name in list(self._module_instances.keys()):
+                        if module_name not in valid_module_keys:
+                            del self._module_instances[module_name]
 
-                # Execution times cleanup (en fazla 1000 kayıt tut)
+                # Performance tracking cleanup
                 if len(self._execution_times) > 1000:
                     self._execution_times = self._execution_times[-500:]
 
-                # Zorunlu çöp toplama (memory leak riskine karşı)
                 gc.collect()
-
                 logger.debug("Cleanup completed")
 
             except asyncio.CancelledError:
@@ -340,8 +387,15 @@ class AnalysisAggregator:
             except Exception as e:
                 logger.error(f"Cleanup task error: {str(e)}")
 
+    def _get_module_instance_key(self, module_file: str) -> str:
+        """Benzersiz instance key oluştur"""
+        base_name = os.path.splitext(os.path.basename(module_file))[0]
+        return f"{base_name}_{hashlib.md5(module_file.encode()).hexdigest()[:8]}"
+        
     
-        # analysis_core.py'de health check geliştirmesi
+    
+    
+    # analysis_core.py'de health check geliştirmesi
     async def comprehensive_health_check(self):
         """Kapsamlı sistem sağlık kontrolü"""
         checks = {
@@ -351,7 +405,6 @@ class AnalysisAggregator:
             "api_connectivity": await self._check_api_connectivity()
         }
         return all(checks.values()), checks
-    
     
     
 
@@ -387,6 +440,77 @@ class PerformanceOptimizedAggregator(AnalysisAggregator):
         
         return await asyncio.gather(*[process_symbol(s) for s in symbols])
 
+
+
+# Çoklu Kullanıcı ve Modül Performansı class EnhancedAnalysisAggregator+ class UserLimit:
+class EnhancedAnalysisAggregator(AnalysisAggregator):
+    def __init__(self):
+        super().__init__()
+        self._user_limits: Dict[str, UserLimit] = {}
+        self._semaphores: Dict[str, asyncio.Semaphore] = {}
+        
+    async def run_analysis_for_user(self, user_id: str, symbol: str, module_names: List[str], 
+                                  priority: Optional[str] = None) -> AggregatedResult:
+        """Kullanıcı bazlı limitli analiz"""
+        # Kullanıcı limitlerini kontrol et
+        user_limit = self._get_user_limit(user_id)
+        if not user_limit.can_execute(len(module_names)):
+            raise HTTPException(status_code=429, detail="Too many requests")
+        
+        # Concurrent limit semaphore
+        semaphore = self._get_semaphore(user_id)
+        async with semaphore:
+            modules = [m for m in self.schema.modules if m.name in module_names]
+            tasks = [self.run_single_analysis(m, symbol, priority) for m in modules]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            user_limit.record_execution(len(modules))
+            
+            valid_results = [r for r in results if isinstance(r, AnalysisResult)]
+            return AggregatedResult(
+                symbol=symbol,
+                results=valid_results,
+                total_execution_time=0,  # Hesaplanacak
+                success_count=sum(1 for r in valid_results if r.status == AnalysisStatus.COMPLETED),
+                failed_count=sum(1 for r in valid_results if r.status == AnalysisStatus.FAILED)
+            )
+    
+    def _get_user_limit(self, user_id: str) -> 'UserLimit':
+        if user_id not in self._user_limits:
+            self._user_limits[user_id] = UserLimit(
+                max_concurrent=5,  # Aynı anda max 5 modül
+                max_per_minute=30,  # Dakikada max 30 modül
+                max_modules_per_request=10  # Tek requestte max 10 modül
+            )
+        return self._user_limits[user_id]
+    
+    def _get_semaphore(self, user_id: str) -> asyncio.Semaphore:
+        if user_id not in self._semaphores:
+            self._semaphores[user_id] = asyncio.Semaphore(3)  # Kullanıcı başına 3 concurrent
+        return self._semaphores[user_id]
+
+@dataclass
+class UserLimit:
+    max_concurrent: int
+    max_per_minute: int 
+    max_modules_per_request: int
+    _current_minute: int = 0
+    _minute_count: int = 0
+    
+    def can_execute(self, module_count: int) -> bool:
+        current_minute = time.time() // 60
+        if current_minute != self._current_minute:
+            self._current_minute = current_minute
+            self._minute_count = 0
+            
+        return (module_count <= self.max_modules_per_request and 
+                self._minute_count + module_count <= self.max_per_minute)
+    
+    def record_execution(self, module_count: int):
+        self._minute_count += module_count
+
+
+
 # Global aggregator instance
 aggregator = AnalysisAggregator()
 
@@ -395,3 +519,14 @@ async def get_aggregator() -> AnalysisAggregator:
     if not aggregator._is_running:
         await aggregator.start()
     return aggregator
+    
+
+
+#------------------------------
+# Kullanım - birleşik skor
+aggregator = AnalysisAggregator()
+result = await aggregator.get_trend_strength("BTCUSDT")
+
+print(f"Trend Strength: {result['score']}")
+print(f"Signal: {result['signal']}")
+print(f"Confidence: {result['confidence']}")
