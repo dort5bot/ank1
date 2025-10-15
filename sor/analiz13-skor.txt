@@ -1,21 +1,137 @@
+    
+ analysis/
+│   ├── analysis_base_module.py   #
+│   ├── analysis_core.py          # Ana aggregator
+	├── composite/  # bileşik skorlar modülü
+    │   ├── composite_engine.py          # Ana bileşik skor motoru
+    │   ├── composite_strategies.py      # Skor stratejileri
+    │   ├── composite_config.yaml        # Tüm bileşik skor tanımları
+    │   └── composite_optimizer.py       # Ağırlık optimizasyonu
+	
+	
+	bu yapıya uygun olarak
+	2 den fazla kullanıcıya uygun olarak
+	
+### 🔴 1. **Trend Strength Score** - ÖNERİLİYOR ⭐
+**Amaç:** Fiyat yönü ve momentum gücünü daha sağlam ölçmek
+**Modüller:**
+* A. Trend & Momentum
+* B. Piyasa Rejimi
+* C. Derivatives & Sentiment
+* D. Order Flow & Microstructure
+
+**Gerekçe:**
+* A: Fiyatın teknik yönü
+* B: Rejim analizi → trend mi, range mi?
+* C: Trader'ların pozisyonu
+* D: Gerçek zamanlı alım-satım baskısı
+
+**Skor Adı:** `trend_strength_score` (0-1 arası)
+A (Trend) %35 + B (Regime) %25 + C (Sentiment) %20 + D (Order Flow) %20
+
+
+bileşik skoruna uygun tam ve gerekli kodları vevr
+
+
+
+
+=========================================
+*****************************************
+=========================================
+
+📈 ÖNCELİK SIRALAMASI
+⭐1+ Trend Strength Score - En yüksek fayda
+⭐3+ Risk Exposure Score - Risk yönetimi için kritik
+⭐5 Liquidity Pressure Index - Kısa vadeli işlemler için
+⭐7 Anomaly Detection Alert - Risk önleme için
+⭐8 Market Health Score - Genel durum izleme
+
+
+### 🔴 1. **Trend Strength Score** - ÖNERİLİYOR ⭐
+**Amaç:** Fiyat yönü ve momentum gücünü daha sağlam ölçmek
+**Modüller:**
+* A. Trend & Momentum
+* B. Piyasa Rejimi
+* C. Derivatives & Sentiment
+* D. Order Flow & Microstructure
+
+**Gerekçe:**
+* A: Fiyatın teknik yönü
+* B: Rejim analizi → trend mi, range mi?
+* C: Trader'ların pozisyonu
+* D: Gerçek zamanlı alım-satım baskısı
+
+**Skor Adı:** `trend_strength_score` (0-1 arası)
+A (Trend) %35 + B (Regime) %25 + C (Sentiment) %20 + D (Order Flow) %20
+
+
+### 🟠 3. **Risk Exposure Score (armut)** - ÖNERİLİYOR ⭐
+**Amaç:** Mevcut durumda pozisyon almak ne kadar riskli?
+**Modüller:**
+* B. Piyasa Rejimi
+* F. On-Chain & Makro
+* G. Risk & Exposure
+* J. Regime Change Detection
+
+**Gerekçe:**
+* B: Volatilite yüksek mi?
+* F: Zincir üstü çıkışlar / ETF çıkışları var mı?
+* G: Mevcut pozisyonların risk seviyesi
+* J: Rejimsel değişiklik / anomali sinyali var mı?
+
+**Skor Adı:** `risk_exposure_score` (0–1, 1 = yüksek risk)
+B %30 + F %25 + G %30 + J %15
+
+
+### 🔵 5. **Liquidity Pressure Index**YÜKSEK POTANSİYEL ⭐
+**Amaç:** Gerçek zamanlı likidite ve hacim baskısını ölçmek
+**Modüller:**
+* D. Order Flow & Microstructure
+* H. Market Micro Alpha
+
+**Gerekçe:**
+* D: Emir defteri dengesi, alım/satım baskısı
+* H: Tick seviyesinde mikro alpha faktörleri
+
+**Skor Adı:** `liquidity_pressure_index` (0–1)
+D %60 + H %40
+
+
+### ⚪ 7. **Anomaly Detection Alert Score**- ÖNERİLİYOR ⭐
+**Amaç:** Beklenmedik durumlar, ani değişimler
+**Modüller:**
+
+* J. Regime Change Detection
+* C. Derivatives & Sentiment
+* G. Risk & Exposure
+
+**Skor Adı:** `anomaly_alert_score` (0–1)
+J %40 + C %30 + G %30
+
+
+
+🚀 ÖNERİLEN EK BİLEŞİK SKORLAR
+🟣 8. Market Health Score (Yeni Öneri)
+text
+Trend Strength %30 + Risk Exposure %25 + Liquidity Pressure %25 + Macro Sentiment %20
+Amaç: Genel piyasa sağlığını 0-100 skalasında ölçmek.
+
+🔶 9. Swing Trading Signal (Yeni Öneri)
+text
+Trend Strength %40 + Buy Opportunity %30 + Risk Exposure %30
+Amaç: 1-7 günlük swing trade sinyalleri.
+
+
+
+
+
+
+
+
+=====================================================
 modüler şekilde yapılandırılmış bir analiz dosyaları var. 
 bunlar agredator yapıdaki 
 ile çağrılabiliyor.
-
-----
-Modül adı -  .py dosya adı -  Config Class Adı - Config Dosyası - 2025 ile Uyumlu Güncel Endpoint’ler -  Veri kaynağı - API Türü -  eklenecek Zorunlu Klasik Metrikler -  eklenecek Profesyonel Metrikler (öncelik: * yüksek / ** orta / *** düşük) -  Amaç -  Çıktı Türü -  Komut - Metot -  İş Tipi -  Paralel işlem Türü -  Gerekçe / Katkı - 
-A. Trend & Momentum (TA) -  trend_moment.py -  TrendConfig - c_trend.py - /api/v3/klines, /api/v3/ticker/24hr, /api/v3/avgPrice, /fapi/v1/continuousKlines, /api/v3/ticker/price, /api/v3/ticker/bookTicker, /fapi/v1/klines, WebSocket <symbol>@kline_interval -  utils/binance_api/binance_a içindeki BinanceAggregator class - Spot Public -  EMA, RSI, MACD, Bollinger Bands, ATR + ADX (Directional Index), Stochastic RSI, Momentum Oscillator -  *Kalman Filter Trend, *Z-Score Normalization, **Wavelet Transform, **Hilbert Transform Slope, **Fractal Dimension Index (FDI) -  Fiyat yönü & momentum gücü -  Trend Score (0–1) -  /trend, /t - GET -  CPU-bound -  Batch -  Spot & futures trend uyuşması, daha sağlam momentum skoru - 
-B. Piyasa Rejimi (Volatilite & Yapı) -  volat_regime.py -  VolatilityConfig - c_volat.py - /api/v3/klines, /fapi/v1/premiumIndex, /fapi/v1/fundingRate, /fapi/v1/indexPriceKlines, /fapi/v1/markPriceKlines, /api/v3/ticker/24hr -  utils/binance_api/binance_a içindeki BinanceAggregator class - Spot + Futures Public -  Historical Volatility, ATR, Bollinger Width + Variance Ratio Test, Range Expansion Index -  *GARCH(1,1), *Entropy Index, **Hurst Exponent, ***Regime Switching Model -  Trend / Range modu ayrımı -  Regime Label (Trend, Range) -  /regime, /rg - GET -  CPU-bound -  Batch -  Volatilite rejimi için implied–realized farkı ve premium yapısı gerek - 
-C. Derivatives & Sentiment (Pozisyon Verileri) -  deriv_sentim.py -  DerivSentimentConfig - c_deriv.py - /fapi/v1/fundingRate, /fapi/v1/openInterestHist, /fapi/v1/longShortRatio, /fapi/v1/liquidationOrders, /fapi/v1/takerlongshortRatio, /fapi/v1/openInterest, /fapi/v1/allForceOrders, topLongShortPositionRatio / AccountRatio gibi varyantlar -  utils/binance_api/binance_a içindeki BinanceAggregator class - Futures Public -  Funding Rate, Open Interest (OI), Long/Short Ratio + OI Change Rate, Funding Rate Skew, Volume Imbalance Index -  *Liquidation Heatmap, **OI Delta Divergence, **Volatility Skew, ***Gamma Exposure -  Trader positioning & sentiment eğilimi -  Sentiment Score (-1→1) -  /sentiment, /s - GET -  I/O-bound + hafif hesap -  Async -  Likidasyon yoğunluğu ve gerçek yön eğilimi ölçümü için şart - 
-D. Order Flow & Microstructure -  order_micros.py -  OrderFlowConfig - c_order.py - /fapi/v1/depth, /fapi/v1/trades, /fapi/v1/ticker/bookTicker, WebSocket <symbol>@aggTrade, /fapi/v1/aggTrades, WebSocket <symbol>@depth, <symbol>@kline_interval -  utils/binance_api/binance_a içindeki BinanceAggregator class - Futures Public -  Orderbook Imbalance, Spread, Market Buy/Sell Pressure + Trade Aggression Ratio, Slippage, Depth Elasticity -  *CVD (Cumulative Volume Delta), **Order Flow Imbalance Index (OFI), **Taker Dominance Ratio, ***Liquidity Density Map -  Anlık yön & likidite baskısı -  Liquidity Pressure Score (0–1) -  /flow, /f - GET -  Stream + CPU (karma) -  Stream -  Gerçek zamanlı microdata için websocket yeterli - 
-E. Korelasyon & Lead-Lag (Liderlik Analizi) -  corr_lead.py -  CorrelationConfig - c_corr.py - /api/v3/klines, /fapi/v1/markPriceKlines, /api/v3/ticker/price, /api/v3/ticker/price?symbols=[…], /api/v3/ticker/bookTicker, WebSocket <symbol>@ticker -  utils/binance_api/binance_a içindeki BinanceAggregator class - Spot + Futures Public -  Pearson Corr, Beta, Rolling Covariance + Partial Correlation, Rolling Lead-Lag Delta -  *Granger Causality Test, *Dynamic Time Warping (DTW), **Canonical Correlation, ***Vector AutoReg (VAR) -  Coin’ler arası liderlik & yön takibi -  Correlation Lead-Lag Matrix -  /corr, /c - GET -  CPU + I/O karışık -  Batch -  Çoklu sembol korelasyon için mevcut yapılar yeterli - 
-F. On-Chain & Makro (Opsiyonel) -  onchain.py -  OnChainConfig - c_onchain.py - Dış kaynaklar (Glassnode, CryptoQuant, Farside, Coinglass), ETF / Netflow API’leri (ör. coinglass.com/api/pro/netflow) -   - External Public -  Stablecoin Flow, CEX Inflow/Outflow, ETF Net Flow + Exchange Net Position Change, Realized Cap, NUPL -  *Net Realized Profit/Loss, *Exchange Whale Ratio, **MVRV Z-Score, ***SOPR -  Zincir üstü likidite & makro eğilim -  Macro Score (0–1) -  /macro, /ma - GET -  I/O-bound -  Async -  ETF & stablecoin akışlarını güncel çekmek için - 
-G. Risk & Exposure Management -  risk_expos.py -  RiskExposureConfig - c_risk.py - /fapi/v1/liquidationOrders, /fapi/v1/premiumIndex, /api/v3/klines, /fapi/v1/account, /fapi/v1/positionRisk, /fapi/v2/account, /fapi/v2/balance, /api/v3/account, WebSocket userData stream -  utils/binance_api/binance_a içindeki BinanceAggregator class - Spot + Futures Public -  ATR Stop, Liquidation Zones, Max Drawdown + Volatility Targeting, Position Leverage Ratio -  *Value-at-Risk (VaR), *Expected Shortfall (CVaR), **Sharpe/Sortino Dynamic, ***ATR-based Adaptive Stop -  Risk kontrolü & sinyal güvenliği -  Risk Score (0–1) -  /risk,/r - GET -  CPU-bound -  Batch -  Gerçek pozisyon riski, kaldıraç ve VaR hesaplaması için - 
-H. Market Micro Alpha (Tick-Level Alpha Factor) -  microalpha.py -  MicroAlphaConfig - c_micro.py - /fapi/v1/depth, /fapi/v1/trades, WebSocket <symbol>@trade, <symbol>@depth@100ms, /fapi/v1/ticker/price, /fapi/v1/ticker/bookTicker, /fapi/v1/aggTrades, WebSocket <symbol>@aggTrade, <symbol>@depth, <symbol>@kline_interval -  utils/binance_api/binance_a içindeki BinanceAggregator class - Futures Public (Real-Time) -  Tick Volume, Spread, Bid/Ask Imbalance, Trade Direction Ratio + Microprice, Quote Stability Index, Order Duration -  *Cumulative Volume Delta (CVD), *Order Flow Imbalance Index (OFI), *Microprice Deviation, **Market Impact Model (Kyle’s λ), **Latency Adjusted Flow Ratio, ***High-Frequency Z-score -  Gerçek zamanlı mikro-yapı yönü ve hacimsel alpha faktörü üretmek -  Micro Alpha Score (0–1) -  /micro, /mi - GET + WebSocket -  async -  Async -  Spread ve fiyat mikro-değişimi hesaplarını destekler - 
-I. Portfolio Optimization & Allocation -  port_alloc.py -  PortfolioAllocConfig - c_portalloc.py - /api/v3/account, /fapi/v2/balance, /fapi/v2/account, /fapi/v2/positionRisk, /api/v3/klines, /fapi/v1/balance, /fapi/v1/positionRisk, WebSocket userData stream -  utils/binance_api/binance_a içindeki BinanceAggregator class - Private -  Sharpe Ratio, Correlation Matrix, VaR + Conditional Beta, Sortino Ratio, Drawdown Correlation -  *Black-Litterman Model, **Hierarchical Risk Parity (HRP), ***Risk Parity -  Dinamik portfolio optimizasyonu -  Allocation Weights -  /allocate, /al - GET -  CPU-bound -  Batch -  Portföy volatilitesi ve kovaryans hesabı için fiyat geçmişi gerek - 
-J. Regime Change Detection & Anomaly -  regime_anomal.py -  RegimeAnomalyConfig - ❌ Hayır (içeride tanımla) - /api/v3/klines, /fapi/v1/openInterestHist, /fapi/v1/fundingRate, /fapi/v1/markPriceKlines, /fapi/v1/openInterest, WebSocket <symbol>@markPriceUpdate -  utils/binance_api/binance_a içindeki BinanceAggregator class - Spot + Futures -  Z-Score, Rolling Mean/Std + Rolling Skewness/Kurtosis, Cumulative Return Deviation -  *Changepoint Detection (CUSUM), **Isolation Forest, ***Spectral Residual -  Ani değişim ve anomaly tespiti -  Anomaly Score (0-1) -  /redet, /rd - GET -  async -  Async -  Rejim değişimi tespitinde OI ve funding değişimi faydalı - 
----
-
 
 
 Her modül kendi içinde farklı metrikler ve sinyaller üretiyor
@@ -24,32 +140,31 @@ bunların bazıları **birleştirilerek bileşik skorlar (composite score)** ür
 Aşağıda **bileşik skor üretimi için önerilebilecek bazı kombinasyonlar** yer alıyor. 
 Her bir skorun adı, hangi modüllerden oluştuğu ve hangi amacı taşıdığı detaylı şekilde verilmiştir.
 
-BUNLARI İNCELE ANLAMLI MI,
+BUNLARI İNCELE nitelikli mi,
+ürettiğkleri skorlar kripto piyasası hakkında fikir verebilir mi
 ÖNERİN TAVSİYEN VAR MI
+ekleme/ değiştirme/ silme/ uygunluk değerlendir
 ---
 
-### 🔴 1. **Trend Strength Score**
-
+### 🔴 1. **Trend Strength Score** - ÖNERİLİYOR ⭐
 **Amaç:** Fiyat yönü ve momentum gücünü daha sağlam ölçmek
 **Modüller:**
-
 * A. Trend & Momentum
 * B. Piyasa Rejimi
 * C. Derivatives & Sentiment
 * D. Order Flow & Microstructure
 
 **Gerekçe:**
-
 * A: Fiyatın teknik yönü
 * B: Rejim analizi → trend mi, range mi?
 * C: Trader'ların pozisyonu
 * D: Gerçek zamanlı alım-satım baskısı
 
 **Skor Adı:** `trend_strength_score` (0-1 arası)
-
+A (Trend) %35 + B (Regime) %25 + C (Sentiment) %20 + D (Order Flow) %20
 ---
 
-### 🟡 2. **Buy Opportunity Score (elma)**
+### 🟡 2. **Buy Opportunity Score (elma)**GELİŞTİRİLMELİ
 
 **Amaç:** Potansiyel alım fırsatlarını belirlemek (teknik + duyarlılık temelli)
 **Modüller:**
@@ -67,31 +182,28 @@ BUNLARI İNCELE ANLAMLI MI,
 * E: Lider coinler ile korelasyon pozitif mi?
 
 **Skor Adı:** `buy_opportunity_score` (0–1)
-
+A %30 + C %25 + D %25 + E %20
 ---
 
-### 🟠 3. **Risk Exposure Score (armut)**
-
+### 🟠 3. **Risk Exposure Score (armut)** - ÖNERİLİYOR ⭐
 **Amaç:** Mevcut durumda pozisyon almak ne kadar riskli?
 **Modüller:**
-
 * B. Piyasa Rejimi
 * F. On-Chain & Makro
 * G. Risk & Exposure
 * J. Regime Change Detection
 
 **Gerekçe:**
-
 * B: Volatilite yüksek mi?
 * F: Zincir üstü çıkışlar / ETF çıkışları var mı?
 * G: Mevcut pozisyonların risk seviyesi
 * J: Rejimsel değişiklik / anomali sinyali var mı?
 
 **Skor Adı:** `risk_exposure_score` (0–1, 1 = yüksek risk)
-
+B %30 + F %25 + G %30 + J %15
 ---
 
-### 🟢 4. **Macro + Sentiment Composite Score**
+### 🟢 4. **Macro + Sentiment Composite Score** - ORTA DÜZEY
 
 **Amaç:** Orta–uzun vadeli yön ve eğilim (duyarlılık + makro birleşimi)
 **Modüller:**
@@ -101,28 +213,24 @@ BUNLARI İNCELE ANLAMLI MI,
 * E. Korelasyon & Lead-Lag
 
 **Skor Adı:** `macro_sentiment_score`
-
+C %40 + F %40 + E %20
 ---
 
-### 🔵 5. **Liquidity Pressure Index**
-
+### 🔵 5. **Liquidity Pressure Index**YÜKSEK POTANSİYEL ⭐
 **Amaç:** Gerçek zamanlı likidite ve hacim baskısını ölçmek
 **Modüller:**
-
 * D. Order Flow & Microstructure
 * H. Market Micro Alpha
 
 **Gerekçe:**
-
 * D: Emir defteri dengesi, alım/satım baskısı
 * H: Tick seviyesinde mikro alpha faktörleri
 
 **Skor Adı:** `liquidity_pressure_index` (0–1)
-
+D %60 + H %40
 ---
 
-### ⚫ 6. **Portfolio Optimization Signal**
-
+### ⚫ 6. **Portfolio Optimization Signal** VARMIŞ
 **Amaç:** Varlık ağırlıklarının optimize edilmesi
 **Modüller:**
 
@@ -134,8 +242,7 @@ BUNLARI İNCELE ANLAMLI MI,
 
 ---
 
-### ⚪ 7. **Anomaly Detection Alert Score**
-
+### ⚪ 7. **Anomaly Detection Alert Score**- ÖNERİLİYOR ⭐
 **Amaç:** Beklenmedik durumlar, ani değişimler
 **Modüller:**
 
@@ -144,8 +251,40 @@ BUNLARI İNCELE ANLAMLI MI,
 * G. Risk & Exposure
 
 **Skor Adı:** `anomaly_alert_score` (0–1)
-
+J %40 + C %30 + G %30
 ---
+
+🚀 ÖNERİLEN EK BİLEŞİK SKORLAR
+🟣 8. Market Health Score (Yeni Öneri)
+text
+Trend Strength %30 + Risk Exposure %25 + Liquidity Pressure %25 + Macro Sentiment %20
+Amaç: Genel piyasa sağlığını 0-100 skalasında ölçmek.
+
+🔶 9. Swing Trading Signal (Yeni Öneri)
+text
+Trend Strength %40 + Buy Opportunity %30 + Risk Exposure %30
+Amaç: 1-7 günlük swing trade sinyalleri.
+
+⚙️ TEKNİK UYGULAMA ÖNERİLERİ
+Ağırlıklandırma Yöntemi:
+python
+def calculate_composite_score(components: Dict[str, float], weights: Dict[str, float]) -> float:
+    valid_components = {k: v for k, v in components.items() if k in weights and v is not None}
+    if not valid_components:
+        return 0.5  # Neutral fallback
+    
+    total_weight = sum(weights[k] for k in valid_components)
+    weighted_sum = sum(components[k] * weights[k] for k in valid_components)
+    
+    return weighted_sum / total_weight
+Zaman Uyumluluğu:
+Kısa vadeli skorlar (Liquidity Pressure): 5-15 dakika
+
+Orta vadeli (Trend Strength): 1-4 saat
+
+Uzun vadeli (Macro Score): 1-7 gün
+
+
 
 ## 🔄 Bileşik Skorlar İçin Yöntem Önerisi
 
@@ -156,19 +295,14 @@ Skorları birleştirirken aşağıdaki yöntemler kullanılabilir:
 * **PCA / Feature Reduction:** İstatistiksel yaklaşım (gerekirse)
 * **Model Tabanlı Ensemble:** (örneğin bir sinyal makinesi)
 
----
+📈 ÖNCELİK SIRALAMASI
+⭐1 Trend Strength Score - En yüksek fayda
+⭐3 Risk Exposure Score - Risk yönetimi için kritik
+⭐5 Liquidity Pressure Index - Kısa vadeli işlemler için
+⭐7 Anomaly Detection Alert - Risk önleme için
+⭐8 Market Health Score - Genel durum izleme
 
-## ❓ Örnek API Komutları
-
-```bash
-GET /composite/trend_strength?symbol=BTCUSDT
-GET /composite/risk_exposure?symbol=BTCUSDT
-GET /composite/buy_opportunity?symbol=BTCUSDT
-GET /composite/liquidity_pressure?symbol=BTCUSDT
-GET /composite/optimal_allocation
-```
+🎯 SONUÇ
+Önerdiğiniz bileşik skorlar genel olarak çok nitelikli ve uygulanabilir. Özellikle 1, 3, 5 ve 7 numaralı skorlar yüksek potansiyele sahip. İlk etapta bu 4 skoru implemente etmenizi, daha sonra diğerlerini eklemenizi öneririm.
 
 ---
-
-İsterseniz bu bileşik skorlar için örnek bir Python kod yapısı da oluşturabilirim. İlginizi çeker mi?
-
