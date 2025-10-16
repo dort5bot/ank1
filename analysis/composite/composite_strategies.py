@@ -110,6 +110,30 @@ class BaseCompositeStrategy(ABC):
         else:
             return "neutral"
 
+#   🔴 BaseCompositeStrategy'ye Yardımcı Metod
+
+    def _get_neutral_module_result(self, module_name: str) -> Dict[str, Any]:
+        """Nötr modül sonucu oluştur"""
+        return {
+            'score': 0.5,
+            'signal': 'neutral',
+            'confidence': 0.0,
+            'components': {},
+            'fallback': True,
+            'module': module_name
+        }
+    
+    def _get_error_fallback(self) -> Dict[str, Any]:
+        """Hata durumu için fallback response"""
+        return {
+            'score': 0.5,
+            'confidence': 0.0,
+            'signal': 'error',
+            'components': {},
+            'error': True
+        }
+
+
 class TrendStrengthStrategy(BaseCompositeStrategy):
     """
     Trend Strength Score Stratejisi
@@ -235,6 +259,8 @@ class TrendStrengthStrategy(BaseCompositeStrategy):
             'risk': 'Yüksek'
         })
 
+# 🟡 RiskExposureStrategyRiskExposureStrategy
+
 class RiskExposureStrategy(BaseCompositeStrategy):
     """Risk Exposure Score Stratejisi"""
     
@@ -243,8 +269,126 @@ class RiskExposureStrategy(BaseCompositeStrategy):
         return ["regime_anomal", "onchain", "risk_expos"]
     
     async def calculate(self, module_results: Dict, symbol: str) -> Dict[str, Any]:
-        # Implementasyon benzer şekilde
-        pass
+        """Risk Exposure Score hesapla"""
+        try:
+            scores = self._extract_scores(module_results)
+            
+            # Risk skoru - yüksek = kötü
+            regime_score = scores.get("regime_anomal", 0.5)
+            onchain_score = scores.get("onchain", 0.5) 
+            risk_score = scores.get("risk_expos", 0.5)
+            
+            final_score = (
+                regime_score * self.weights.get("regime_anomal", 0.30) +
+                onchain_score * self.weights.get("onchain", 0.25) + 
+                risk_score * self.weights.get("risk_expos", 0.30)
+            )
+            
+            confidence = self._calculate_confidence(module_results)
+            signal = self._get_risk_signal(final_score)
+            
+            return {
+                'score': round(final_score, 4),
+                'confidence': round(confidence, 4),
+                'signal': signal,
+                'components': {
+                    'regime_anomal': {
+                        'score': regime_score,
+                        'weight': self.weights.get("regime_anomal", 0.30),
+                        'contribution': regime_score * self.weights.get("regime_anomal", 0.30)
+                    },
+                    'onchain': {
+                        'score': onchain_score,
+                        'weight': self.weights.get("onchain", 0.25),
+                        'contribution': onchain_score * self.weights.get("onchain", 0.25)
+                    },
+                    'risk_expos': {
+                        'score': risk_score,
+                        'weight': self.weights.get("risk_expos", 0.30),
+                        'contribution': risk_score * self.weights.get("risk_expos", 0.30)
+                    }
+                },
+                'risk_analysis': self._analyze_risk_factors(module_results),
+                'interpretation': self._interpret_risk_exposure(final_score, signal),
+                'timestamp': module_results.get('timestamp')
+            }
+        except Exception as e:
+            logger.error(f"Risk exposure calculation failed: {e}")
+            return {
+                'score': 0.5,
+                'confidence': 0.0,
+                'signal': 'error',
+                'components': {},
+                'error': str(e)
+            }
+    
+    def _analyze_risk_factors(self, module_results: Dict) -> Dict[str, Any]:
+        """Risk faktörlerini detaylı analiz et"""
+        regime_data = module_results.get("regime_anomal", {})
+        onchain_data = module_results.get("onchain", {})
+        risk_data = module_results.get("risk_expos", {})
+        
+        risk_factors = []
+        
+        # Volatilite riski
+        if regime_data.get('signal') in ['high_volatility', 'regime_change']:
+            risk_factors.append("high_volatility")
+        
+        # On-chain riskler
+        if onchain_data.get('metrics', {}).get('network_health', 0) < 0.4:
+            risk_factors.append("network_weakness")
+        
+        # Risk exposure detayları
+        if risk_data.get('signal') == 'high_risk':
+            risk_factors.append("elevated_exposure")
+        
+        # Risk konsantrasyonu
+        risk_scores = [
+            regime_data.get('score', 0.5),
+            onchain_data.get('score', 0.5),
+            risk_data.get('score', 0.5)
+        ]
+        risk_concentration = np.std(risk_scores)
+        
+        return {
+            'risk_factors': risk_factors,
+            'risk_concentration': risk_concentration,
+            'volatility_risk': regime_data.get('score', 0.5),
+            'network_risk': onchain_data.get('score', 0.5),
+            'exposure_risk': risk_data.get('score', 0.5),
+            'overall_risk_level': len(risk_factors) / 3.0  # Normalize to 0-1
+        }
+    
+    def _interpret_risk_exposure(self, score: float, signal: str) -> Dict[str, str]:
+        """Risk skorunu yorumla"""
+        interpretations = {
+            'high_risk': {
+                'summary': 'Yüksek risk seviyesi - Dikkatli olunmalı',
+                'action': 'Pozisyon boyutlarını küçültün, stop-loss kullanın',
+                'warning': 'Büyük kayıp riski yüksek'
+            },
+            'medium_risk': {
+                'summary': 'Orta seviye risk - Standart önlemler yeterli',
+                'action': 'Normal risk yönetimi uygulayın',
+                'warning': 'Piyasa koşullarını yakından takip edin'
+            },
+            'low_risk': {
+                'summary': 'Düşük risk seviyesi - Nispeten güvenli',
+                'action': 'Standart işlem stratejileri uygulanabilir',
+                'warning': 'Ani değişimlere karşı hazırlıklı olun'
+            }
+        }
+        
+        return interpretations.get(signal, {
+            'summary': 'Risk seviyesi belirsiz',
+            'action': 'Temkinli davranın',
+            'warning': 'Ek doğrulama gerekli'
+        })
+
+     
+
+
+# 🔴 BuyOpportunityStrategy Tam Implementasyonu
 
 class BuyOpportunityStrategy(BaseCompositeStrategy):
     """Buy Opportunity Score Stratejisi"""
@@ -254,9 +398,190 @@ class BuyOpportunityStrategy(BaseCompositeStrategy):
         return ["trend_moment", "deriv_sentim", "order_micros", "corr_lead"]
     
     async def calculate(self, module_results: Dict, symbol: str) -> Dict[str, Any]:
-        # Implementasyon benzer şekilde
-        pass
-
+        """Buy Opportunity Score hesapla"""
+        try:
+            scores = self._extract_scores(module_results)
+            
+            # Alım fırsatı skorları - yüksek = iyi fırsat
+            trend_score = scores.get("trend_moment", 0.5)
+            sentiment_score = scores.get("deriv_sentim", 0.5)
+            order_flow_score = scores.get("order_micros", 0.5)
+            correlation_score = scores.get("corr_lead", 0.5)
+            
+            final_score = (
+                trend_score * self.weights.get("trend_moment", 0.30) +
+                sentiment_score * self.weights.get("deriv_sentim", 0.25) +
+                order_flow_score * self.weights.get("order_micros", 0.25) +
+                correlation_score * self.weights.get("corr_lead", 0.20)
+            )
+            
+            confidence = self._calculate_confidence(module_results)
+            signal = self._get_buy_opportunity_signal(final_score)
+            
+            # Fırsat kalitesi analizi
+            opportunity_quality = self._analyze_opportunity_quality(
+                trend_score, sentiment_score, order_flow_score, correlation_score
+            )
+            
+            return {
+                'score': round(final_score, 4),
+                'confidence': round(confidence, 4),
+                'signal': signal,
+                'components': {
+                    'trend_moment': {
+                        'score': trend_score,
+                        'weight': self.weights.get("trend_moment", 0.30),
+                        'contribution': trend_score * self.weights.get("trend_moment", 0.30)
+                    },
+                    'deriv_sentim': {
+                        'score': sentiment_score,
+                        'weight': self.weights.get("deriv_sentim", 0.25),
+                        'contribution': sentiment_score * self.weights.get("deriv_sentim", 0.25)
+                    },
+                    'order_micros': {
+                        'score': order_flow_score,
+                        'weight': self.weights.get("order_micros", 0.25),
+                        'contribution': order_flow_score * self.weights.get("order_micros", 0.25)
+                    },
+                    'corr_lead': {
+                        'score': correlation_score,
+                        'weight': self.weights.get("corr_lead", 0.20),
+                        'contribution': correlation_score * self.weights.get("corr_lead", 0.20)
+                    }
+                },
+                'opportunity_analysis': opportunity_quality,
+                'entry_recommendation': self._generate_entry_recommendation(
+                    final_score, signal, opportunity_quality
+                ),
+                'timestamp': module_results.get('timestamp')
+            }
+            
+        except Exception as e:
+            logger.error(f"Buy opportunity calculation failed: {e}")
+            return {
+                'score': 0.5,
+                'confidence': 0.0,
+                'signal': 'neutral',
+                'components': {},
+                'error': str(e)
+            }
+    
+    def _get_buy_opportunity_signal(self, score: float) -> str:
+        """Alım fırsatı sinyali"""
+        if score >= self.thresholds.get('strong_buy', 0.7):
+            return "excellent_opportunity"
+        elif score >= self.thresholds.get('good_buy', 0.6):
+            return "good_opportunity"
+        elif score >= self.thresholds.get('fair_buy', 0.55):
+            return "fair_opportunity"
+        elif score <= self.thresholds.get('poor_buy', 0.4):
+            return "poor_opportunity"
+        else:
+            return "neutral_opportunity"
+    
+    def _analyze_opportunity_quality(self, trend_score: float, sentiment_score: float,
+                                   order_flow_score: float, correlation_score: float) -> Dict[str, Any]:
+        """Alım fırsatı kalitesini analiz et"""
+        # Fırsat gücü faktörleri
+        factors = {
+            'trend_alignment': trend_score > 0.6,
+            'sentiment_support': sentiment_score > 0.5,
+            'order_flow_positive': order_flow_score > 0.5,
+            'correlation_support': correlation_score > 0.5
+        }
+        
+        positive_factors = sum(factors.values())
+        opportunity_strength = positive_factors / len(factors)
+        
+        # Timing analizi
+        timing_score = (trend_score + order_flow_score) / 2.0
+        if timing_score > 0.7:
+            timing = "excellent_timing"
+        elif timing_score > 0.6:
+            timing = "good_timing"
+        elif timing_score > 0.5:
+            timing = "fair_timing"
+        else:
+            timing = "poor_timing"
+        
+        # Risk/Reward profili
+        reward_potential = (trend_score + sentiment_score) / 2.0
+        risk_level = 1.0 - ((order_flow_score + correlation_score) / 2.0)
+        risk_reward_ratio = reward_potential / (risk_level + 0.1)  # Avoid division by zero
+        
+        return {
+            'positive_factors': positive_factors,
+            'total_factors': len(factors),
+            'opportunity_strength': opportunity_strength,
+            'timing_quality': timing,
+            'reward_potential': reward_potential,
+            'risk_level': risk_level,
+            'risk_reward_ratio': risk_reward_ratio,
+            'consistency_score': 1.0 - np.std([trend_score, sentiment_score, order_flow_score, correlation_score])
+        }
+    
+    def _generate_entry_recommendation(self, score: float, signal: str, 
+                                     opportunity_quality: Dict) -> Dict[str, Any]:
+        """Giriş önerisi oluştur"""
+        recommendations = {
+            'excellent_opportunity': {
+                'action': 'AGGRESSIVE_BUY',
+                'allocation': '70-80%',
+                'entry_strategy': 'Immediate entry, scale in on dips',
+                'stop_loss': '3-5% below entry',
+                'targets': '10-15% profit, trail stop after 8%'
+            },
+            'good_opportunity': {
+                'action': 'MODERATE_BUY',
+                'allocation': '50-60%',
+                'entry_strategy': 'Scale entry over 2-3 periods',
+                'stop_loss': '5-7% below entry',
+                'targets': '8-12% profit'
+            },
+            'fair_opportunity': {
+                'action': 'CAUTIOUS_BUY',
+                'allocation': '30-40%',
+                'entry_strategy': 'Wait for pullback, limit orders',
+                'stop_loss': '7-10% below entry',
+                'targets': '6-10% profit'
+            },
+            'poor_opportunity': {
+                'action': 'AVOID_BUY',
+                'allocation': '0-20%',
+                'entry_strategy': 'Wait for better setup',
+                'stop_loss': 'N/A',
+                'targets': 'N/A'
+            },
+            'neutral_opportunity': {
+                'action': 'MONITOR',
+                'allocation': '0%',
+                'entry_strategy': 'Wait for confirmation',
+                'stop_loss': 'N/A',
+                'targets': 'N/A'
+            }
+        }
+        
+        base_recommendation = recommendations.get(signal, recommendations['neutral_opportunity'])
+        
+        # Risk/Reward adjust
+        rr_ratio = opportunity_quality.get('risk_reward_ratio', 1.0)
+        if rr_ratio > 2.0:
+            risk_adjusted = "excellent_rr"
+        elif rr_ratio > 1.5:
+            risk_adjusted = "good_rr"
+        elif rr_ratio > 1.0:
+            risk_adjusted = "fair_rr"
+        else:
+            risk_adjusted = "poor_rr"
+        
+        return {
+            **base_recommendation,
+            'risk_adjusted_quality': risk_adjusted,
+            'risk_reward_ratio': rr_ratio,
+            'confidence_level': score,
+            'timing_quality': opportunity_quality.get('timing_quality', 'fair_timing')
+        }
+  
 
 # 🔵 5. Liquidity Pressure Index
 class LiquidityPressureStrategy(BaseCompositeStrategy):
@@ -1124,4 +1449,4 @@ class SwingTradingStrategy(BaseCompositeStrategy):
             'management': 'Monitor closely'
         })
 
-# 
+# BaseCompositeStrategy'ye Yardımcı Metod Ekle
