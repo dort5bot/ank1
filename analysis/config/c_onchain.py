@@ -1,5 +1,4 @@
 # analysis/config/c_onchain.py
-# Module config for onchain.py
 
 OnChainConfig = {
     "version": "1.0.0",
@@ -34,3 +33,5 @@ OnChainConfig = {
         "enable": False
     }
 }
+
+CONFIG = OnChainConfig

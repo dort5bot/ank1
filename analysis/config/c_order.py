@@ -51,3 +51,5 @@ OrderFlowConfig = {
     "mid_price": 100.0,  # fallback mid price if book missing (for tests)
     "version": "1.0.0",
 }
+
+CONFIG = OrderFlowConfig
