@@ -1,7 +1,10 @@
-# utils/cache_manager.py
+# utils/cache_manager.py class TTLCacheManager
 # Global TTL Cache Manager
 # Çoklu kullanıcı destekli, async, thread-safe, yüksek performanslı
 """
+from utils.cache_manager import TTLCacheManager as Cache
+from utils.cache_manager import TTLCacheManager as Cache
+
 | Özellik                         | Açıklama                                                                 |
 | ------------------------------- | ------------------------------------------------------------------------ |
 | 🧠 **TTL Cache (Time-to-Live)** | Veriyi belirli süre saklar (örn. 60 saniye).                             |
@@ -146,3 +149,27 @@ class TTLCacheManager:
                 "ttl": self.ttl,
                 "max_items": self.max_items,
             }
+# ---------------------------------------------------------------
+# 🎯 Eski modüllerle uyumluluk: cache_result decorator
+# ---------------------------------------------------------------
+# Bu sayede `from utils.cache import cache_result` yerine
+# `from utils.cache_manager import cache_result` kullanılabilir.
+# İleride refactor sürecinde geçici çözüm olarak yeterlidir.
+
+_cache = TTLCacheManager(ttl_seconds=60)
+
+def cache_result(ttl_seconds: int = 60, **kwargs):
+    """Basit TTL cache decorator (async fonksiyonlar için)."""
+    ttl = kwargs.get("ttl", ttl_seconds)
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            key = (func.__name__, args, tuple(kwargs.items()))
+            cached = await _cache.get(key)
+            if cached is not None:
+                return cached
+            result = await func(*args, **kwargs)
+            await _cache.set(key, result)
+            return result
+        return wrapper
+    return decorator
+
