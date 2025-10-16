@@ -53,3 +53,90 @@ composite_scores:
       deriv_sentim: 0.25
       order_micros: 0.25
       corr_lead: 0.20
+ 
+    #
+  liquidity_pressure:
+    description: "Gerçek zamanlı likidite ve hacim baskısı ölçümü"
+    modules:
+      - order_micros
+      - microalpha
+    weights:
+      order_micros: 0.60    # D: Order Flow & Microstructure
+      microalpha: 0.40      # H: Market Micro Alpha
+    thresholds:
+      strong_buying_pressure: 0.7
+      moderate_buying_pressure: 0.6
+      normal_liquidity: 0.5
+      low_liquidity: 0.3
+    metadata:
+      purpose: "Likidite akışı ve piyasa derinliği analizi"
+      timeframe: "5-15 dakika"
+      output_range: "0-1"
+
+  anomaly_alert:
+    description: "Ani değişim ve anomali tespit sistemi"
+    modules:
+      - regime_anomal
+      - deriv_sentim
+      - risk_expos
+    weights:
+      regime_anomal: 0.40    # J: Regime Change Detection
+      deriv_sentim: 0.30     # C: Derivatives & Sentiment  
+      risk_expos: 0.30       # G: Risk & Exposure
+    thresholds:
+      critical_anomaly: 0.8
+      high_anomaly: 0.7
+      medium_anomaly: 0.6
+      low_anomaly: 0.5
+    metadata:
+      purpose: "Ani piyasa değişimleri ve olağandışı hareketler"
+      timeframe: "Real-time"
+      alert_level: "high_priority"
+
+  market_health:
+    description: "Genel piyasa sağlık durumu ölçümü"
+    modules:
+      - trend_moment
+      - risk_expos
+      - order_micros
+      - deriv_sentim
+    weights:
+      trend_moment: 0.30      # Trend Strength
+      risk_expos: 0.25        # Risk Exposure (tersi)
+      order_micros: 0.25      # Liquidity Pressure  
+      deriv_sentim: 0.20      # Macro Sentiment
+    thresholds:
+      excellent: 0.8
+      very_healthy: 0.7
+      healthy: 0.6
+      moderate: 0.5
+      weak: 0.4
+      unhealthy: 0.3
+      critical: 0.0
+    metadata:
+      purpose: "Genel piyasa koşulları ve işlem ortamı kalitesi"
+      timeframe: "1-4 saat"
+      output_scale: "0-100"
+
+  swing_trading:
+    description: "1-7 günlük swing trade sinyalleri"
+    modules:
+      - trend_moment
+      - deriv_sentim
+      - risk_expos
+    weights:
+      trend_moment: 0.40      # Trend Strength
+      deriv_sentim: 0.30      # Buy Opportunity
+      risk_expos: 0.30        # Risk Exposure (tersi)
+    thresholds:
+      strong_buy: 0.7
+      buy: 0.6
+      hold_long: 0.55
+      no_trade: 0.45
+      hold_short: 0.4
+      sell: 0.3
+      strong_sell: 0.0
+    metadata:
+      purpose: "Orta vadeli swing trading sinyalleri"
+      timeframe: "1-7 gün"
+      position_sizing: "risk_adjusted"

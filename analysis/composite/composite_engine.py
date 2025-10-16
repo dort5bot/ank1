@@ -58,26 +58,44 @@ class CompositeScoreEngine:
             }
         }
     
+    
+    # _initialize_strategies metodunu güncelle:
     def _initialize_strategies(self):
         """Stratejileri başlat"""
         from .composite_strategies import (
             TrendStrengthStrategy,
             RiskExposureStrategy,
-            BuyOpportunityStrategy
+            BuyOpportunityStrategy,
+            LiquidityPressureStrategy,      # YENİ
+            AnomalyDetectionStrategy,       # YENİ  
+            MarketHealthStrategy,           # YENİ
+            SwingTradingStrategy           # YENİ
         )
         
         strategy_map = {
             'trend_strength': TrendStrengthStrategy(),
             'risk_exposure': RiskExposureStrategy(),
-            'buy_opportunity': BuyOpportunityStrategy()
+            'buy_opportunity': BuyOpportunityStrategy(),
+            'liquidity_pressure': LiquidityPressureStrategy(),    # YENİ
+            'anomaly_alert': AnomalyDetectionStrategy(),         # YENİ
+            'market_health': MarketHealthStrategy(),             # YENİ
+            'swing_trading': SwingTradingStrategy()              # YENİ
         }
         
+    
         # Config'te tanımlı stratejileri yükle
         for score_name, config in self.config.get('composite_scores', {}).items():
             if score_name in strategy_map:
                 strategy_map[score_name].configure(config)
                 self.strategies[score_name] = strategy_map[score_name]
                 logger.info(f"Composite strategy loaded: {score_name}")
+    
+    
+    
+    
+    
+    
+    
     
     async def calculate_composite_scores(self, symbol: str) -> Dict[str, Any]:
         """
