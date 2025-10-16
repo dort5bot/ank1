@@ -34,6 +34,9 @@ from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 import pandas as pd
 
+from utils.data_sources.data_provider import DataProvider
+
+
 # If your project provides BaseAnalysisModule, import it. Otherwise, we emulate a minimal interface.
 try:
     from analysis.analysis_base_module import BaseAnalysisModule
@@ -44,8 +47,7 @@ except Exception:
             self.config = config
 
 # Import config
-from .config.c_order import CONFIG  # adjust path depending on project layout
-
+from analysis.config.c_order import OrderFlowConfig as CONFIG
 
 # ---- Data provider interface -------------------------------------------------
 class DataProviderInterface:

@@ -24,9 +24,9 @@ from collections import deque
 import time
 
 # Local imports
-from analysis_base_module import BaseAnalysisModule
+from analysis.analysis_base_module import BaseAnalysisModule
 from utils.binance_api.binance_a import BinanceAggregator
-from utils.cache import cache_result
+from utils.cache_manager import cache_result
 #yok> from analysis.config.c_micro import CONFIG
 
 logger = logging.getLogger(__name__)

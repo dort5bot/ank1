@@ -9,18 +9,13 @@ Tüm analiz modülleri bu sınıftan türemeli.
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 import pandas as pd
+import numpy as np
 import logging
 from datetime import datetime
 import asyncio
 
 logger = logging.getLogger(__name__)
 
-
-# analysis_base_module.py'ye eklenmeli
-@cache_result(ttl=60, maxsize=1000)
-async def _fetch_ohlcv_data(self, symbol: str, interval: str = "1h", limit: int = 100):
-    # Cache decorator ile performans artışı
-    pass
 
 
 class BaseAnalysisModule(ABC):

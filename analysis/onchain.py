@@ -17,8 +17,9 @@ import numpy as np
 import pandas as pd
 
 # Local imports (projede var olduğu varsayılır)
-from analysis.config.c_onchain import CONFIG
-from .analysis_base_module import BaseAnalysisModule  # base class in repo
+from analysis.config.c_onchain import OnChainConfig as CONFIG
+
+from analysis.analysis_base_module import BaseAnalysisModule  # base class in repo
 from utils.data_sources.data_provider import DataProvider
 
 _LOG = logging.getLogger(__name__)

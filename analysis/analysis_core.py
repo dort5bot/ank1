@@ -17,8 +17,8 @@ from .analysis_schema_manager import (
     load_analysis_schema,
     load_module_run_function,
     resolve_module_path,   # ✅ yeni eklendi
+    AnalysisModule,
     AnalysisSchema,
-    Module,
     CircuitBreaker  # CircuitBreaker import edilmeli
 )
 
@@ -186,7 +186,7 @@ class AnalysisAggregator:
 
     async def run_single_analysis(
         self, 
-        module: Module, 
+        module: AnalysisModule, 
         symbol: str, 
         priority: Optional[str] = None
     ) -> AnalysisResult:
@@ -292,6 +292,26 @@ class AnalysisAggregator:
 
         return result
 
+
+    async def get_module_analysis(self, module_name: str, symbol: str):
+        """Module için cache-first tekil analiz döndüren helper"""
+        # Eğer result cache varsa döndür
+        cache_key = f"mod:{module_name}:{symbol}"
+        if cache_key in self._result_cache:
+            return self._result_cache[cache_key]
+        # Bul modu
+        module = next((m for m in self.schema.modules if m.name == module_name or m.command == module_name), None)
+        if not module:
+            # nötr fallback
+            return {'score':0.5, 'signal':'neutral', 'confidence':0.0, 'module':module_name, 'timestamp': time.time()}
+        res = await self.run_single_analysis(module, symbol)
+        # normalize to dict
+        out = res.data if isinstance(res.data, dict) else {'score':0.5}
+        self._result_cache[cache_key] = out
+        return out
+
+
+
     # ✅ 3️- Toplu çalışma metodu — alt kısma (analiz çalıştırma metodlarının yanına)
     async def run_all(self, symbol: str, priority: Optional[str] = None):
         if not self.schema:
@@ -326,7 +346,6 @@ class AnalysisAggregator:
 
 
     # birleşik
-    # analysis_core.py (mevcut aggregator)
     async def get_comprehensive_analysis(self, symbol: str):
         # Mevcut modül analizleri
         module_results = await self.run_all_analyses(symbol)
@@ -521,12 +540,32 @@ async def get_aggregator() -> AnalysisAggregator:
     return aggregator
     
 
+# analysis_core.py'ye EKLENECEK:
+
+def _get_module_key(self, module_file: str) -> str:
+    """Tüm sistemde tutarlı module key oluştur"""
+    return os.path.splitext(os.path.basename(module_file))[0].lower()
+
+def _get_module_instance_key(self, module_file: str) -> str:
+    """Instance key - hash'li versiyon"""
+    base_key = self._get_module_key(module_file)
+    return f"{base_key}_{hashlib.md5(module_file.encode()).hexdigest()[:8]}"
+
+# Tüm yerde _get_module_key kullanılacak:
+async def run_single_analysis(self, module: AnalysisModule, symbol: str, priority: Optional[str] = None):
+    module_key = self._get_module_key(module.file)  # ✅ TUTARLI
+    instance_key = self._get_module_instance_key(module.file)  # ✅ TUTARLI
+    
+    if module_key not in self._circuit_breakers:  # ✅ module_key kullan
+        self._circuit_breakers[module_key] = CircuitBreaker(...)
 
 #------------------------------
 # Kullanım - birleşik skor
+"""
 aggregator = AnalysisAggregator()
 result = await aggregator.get_trend_strength("BTCUSDT")
 
 print(f"Trend Strength: {result['score']}")
 print(f"Signal: {result['signal']}")
 print(f"Confidence: {result['confidence']}")
+"""

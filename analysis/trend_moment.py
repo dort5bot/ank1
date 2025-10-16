@@ -23,9 +23,11 @@ from scipy.signal import hilbert, detrend
 import pywt
 from pykalman import KalmanFilter
 
-from analysis_base_module import BaseAnalysisModule
+#from utils.analysis.analysis_base_module import BaseAnalysisModule
+from analysis.analysis_base_module import BaseAnalysisModule
+
 from utils.binance_api.binance_a import BinanceAggregator
-from utils.cache import cache_result
+from utils.cache_manager import cache_result
 
 logger = logging.getLogger(__name__)
 

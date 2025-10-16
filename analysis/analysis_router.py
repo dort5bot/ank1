@@ -17,7 +17,8 @@ from typing import Optional, Dict
 import os
 from dotenv import load_dotenv
 
-# ✅ YENİ: APIKeyManager import
+from analysis.analysis_schema_manager import load_module_run_function
+from analysis.analysis_schema_manager import load_analysis_schema
 from utils.apikey_manager import APIKeyManager, initialize_managers
 
 load_dotenv()

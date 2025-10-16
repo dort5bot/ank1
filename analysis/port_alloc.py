@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from analysis.analysis_base_module import BaseAnalysisModule
 from utils.binance_api.binance_a import BinanceAggregator
-from utils.cache import cache_result
+from utils.cache_manager import cache_result
 #from config.c_portalloc import CONFIG
 
 logger = logging.getLogger(__name__)
