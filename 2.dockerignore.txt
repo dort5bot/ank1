@@ -1,0 +1,51 @@
+# Git klasörü
+.git
+.gitignore
+
+# Haskell build çıktıları
+dist
+dist-newstyle
+.stack-work
+*.hi
+*.o
+*.chi
+*.dyn_o
+*.dyn_hi
+
+# Cabal sandbox
+.cabal-sandbox
+cabal.sandbox.config
+*.cabal.user
+
+# Stack özel dosyalar
+.stack-work
+stack.yaml.lock
+
+# Derlenmiş binary dosyalar
+*.exe
+*.out
+*.bin
+
+# IDE / Editor ayarları
+.vscode
+.idea
+
+# MacOS sistem dosyası
+.DS_Store
+
+# Log dosyaları
+*.log
+
+# Docker image arşivleri
+*.tar
+
+# Ortam değişkeni / gizli dosyalar
+.env
+.env.*
+
+# Node_modules (eğer frontend varsa)
+node_modules
+
+# Test dosyaları (isteğe bağlı)
+tests/
+test/
