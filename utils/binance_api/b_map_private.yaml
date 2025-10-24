@@ -1,0 +1,249 @@
+# ============================================================
+# b-map_private.yaml
+# 2025 Binance Futures API v1/v2 sürümüne uygun) ve doğrulanmış versiyonunu
+# Binance'ın resmi Python SDK'sı ve API dokümantasyonuna göre
+# SDK (python-binance v1.0.19+) ile uyumlu
+# ZORUNLU: Tüm endpoint'ler /api/v3/, /fapi/v1/ , /fapi/v2/ ... altında
+# `method: ticker_24hr ŞEKLİNDE "" içermeyecek
+# bütün method isimleri Binance SDK veya native fonksiyon adıyla birebir olacak
+# ============================================================
+
+
+meta:
+  source: Binance
+  version: "2025.1"
+  last_updated: "2025-10-10"
+  maintainer: "ysf-bot-framework"
+  schema_version: 1.2
+  description: "Binance private REST API endpoints for trading, balance, risk, and portfolio management."
+
+private_spot:
+  account_info:
+    client: SpotClient
+    method: account_info
+    path: /api/v3/account
+    http_method: GET
+    signed: true
+    scope: account
+    base: spot
+    weight: 10
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 30
+    job_type: io
+    purpose: "Retrieve account balances, permissions, and trading limits"
+    tags: [private, account, balance, spot]
+    enabled: true
+    version: v3
+    return_type: dict
+
+  account_snapshot:
+    client: SpotClient
+    method: account_snapshot
+    path: /sapi/v1/accountSnapshot
+    http_method: GET
+    signed: true
+    scope: portfolio
+    base: spot
+    weight: 2400
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 3600
+    job_type: io
+    purpose: "Account snapshot for daily portfolio tracking"
+    tags: [private, snapshot, portfolio, spot]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  my_trades:
+    client: SpotClient
+    method: my_trades
+    path: /api/v3/myTrades
+    http_method: GET
+    signed: true
+    scope: trade
+    base: spot
+    weight: 10
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Fetch user trade history for analysis and PnL calculation"
+    tags: [private, trade, history]
+    enabled: true
+    version: v3
+    return_type: list
+
+  place_order:
+    client: SpotClient
+    method: place_order
+    path: /api/v3/order
+    http_method: POST
+    signed: true
+    scope: trade
+    base: spot
+    weight: 1
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 0
+    job_type: io
+    purpose: "Place a new spot trade order"
+    tags: [private, order, trade, spot]
+    enabled: true
+    version: v3
+    return_type: dict
+
+  cancel_order:
+    client: SpotClient
+    method: cancel_order
+    path: /api/v3/order
+    http_method: DELETE
+    signed: true
+    scope: trade
+    base: spot
+    weight: 1
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 0
+    job_type: io
+    purpose: "Cancel existing spot order"
+    tags: [private, order, cancel]
+    enabled: true
+    version: v3
+    return_type: dict
+
+private_futures:
+  position_risk:
+    client: FuturesClient
+    method: position_risk
+    path: /fapi/v2/positionRisk
+    http_method: GET
+    signed: true
+    scope: risk
+    base: futures
+    weight: 5
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 3
+    job_type: io
+    purpose: "Fetch current positions and unrealized PnL"
+    tags: [private, futures, position, risk]
+    enabled: true
+    version: v2
+    return_type: list
+
+  income_history:
+    client: FuturesClient
+    method: income_history
+    path: /fapi/v1/income
+    http_method: GET
+    signed: true
+    scope: pnl
+    base: futures
+    weight: 30
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 60
+    job_type: io
+    purpose: "Fetch realized profit, funding, commission, and income history"
+    tags: [private, income, futures, pnl]
+    enabled: true
+    version: v1
+    return_type: list
+
+  account_balance:
+    client: FuturesClient
+    method: account_balance
+    path: /fapi/v2/balance
+    http_method: GET
+    signed: true
+    scope: account
+    base: futures
+    weight: 5
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 10
+    job_type: io
+    purpose: "Retrieve futures wallet balance for equity/risk analysis"
+    tags: [private, balance, futures]
+    enabled: true
+    version: v2
+    return_type: list
+
+  place_order:
+    client: FuturesClient
+    method: place_order
+    path: /fapi/v1/order
+    http_method: POST
+    signed: true
+    scope: trade
+    base: futures
+    weight: 1
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 0
+    job_type: io
+    purpose: "Submit new futures order"
+    tags: [private, order, trade, futures]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  cancel_order:
+    client: FuturesClient
+    method: cancel_order
+    path: /fapi/v1/order
+    http_method: DELETE
+    signed: true
+    scope: trade
+    base: futures
+    weight: 1
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 0
+    job_type: io
+    purpose: "Cancel futures order by ID or clientOrderId"
+    tags: [private, cancel, trade]
+    enabled: true
+    version: v1
+    return_type: dict
+
+
+  account_info_futures:
+    client: FuturesClient
+    method: account_info
+    path: /fapi/v1/account
+    http_method: GET
+    signed: true
+    scope: account
+    base: futures
+    weight: 5
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 5
+    job_type: io
+    purpose: "Get futures account info including margin, assets, and positions"
+    tags: [private, account, futures]
+    enabled: true
+    version: v1
+    return_type: dict
+
+  full_account_data:
+    client: FuturesClient
+    method: full_account_data
+    path: /fapi/v2/account
+    http_method: GET
+    signed: true
+    scope: account
+    base: futures
+    weight: 10
+    rate_limit_type: USER
+    multi_user_support: true
+    cache_ttl: 10
+    job_type: io
+    purpose: "Fetch full account data including margin, positions, and balances"
+    tags: [private, account, futures]
+    enabled: true
+    version: v2
+    return_type: dict

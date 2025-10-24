@@ -1,0 +1,894 @@
+# ============================================================
+# b-map_public.yaml
+# 2025 Binance Futures API v1/v2 sürümüne uygun) ve doğrulanmış versiyonunu
+# Binance'ın resmi Python SDK'sı ve API dokümantasyonuna göre
+# SDK (python-binance v1.0.19+) ile uyumlu
+# ZORUNLU: Tüm endpoint'ler /api/v3/, /fapi/v1/ , /fapi/v2/ ... altında
+# `method: ticker_24hr ŞEKLİNDE "" içermeyecek
+# bütün method isimleri Binance SDK veya native fonksiyon adıyla birebir olacak
+#abc:           # ✅ YAML key: "abc"
+#  method: abc      # ✅ Method name: "abc"
+# MapLoader.endpoint() methodu > YAML key'leri ile çalışır, 
+# b_spotclient.py methodu > method isimleri ile
+# = b-map_public.yaml=================
+meta:
+  description: Binance public REST API endpoints for market data, trend, liquidity,
+    and analytics.
+  last_updated: '2025-10-10'
+  maintainer: ysf-bot-framework
+  schema_version: 1.2
+  source: Binance
+  version: '2025.1'
+  
+public_spot:
+  avg_price:
+    base: spot
+    cache_ttl: 5
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: avg_price
+    multi_user_support: true
+    path: /api/v3/avgPrice
+    purpose: Get average price for trend/momentum analysis
+    rate_limit_type: IP
+    return_type: dict
+    scope: price
+    signed: false
+    tags:
+    - public
+    - price
+    - trend
+    version: v3
+    weight: 1
+  exchange_info:
+    base: spot
+    cache_ttl: 3600
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: exchange_info
+    multi_user_support: true
+    path: /api/v3/exchangeInfo
+    purpose: Fetch exchange trading rules, symbol info, filters
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - meta
+    - exchange
+    version: v3
+    weight: 10
+  historical_trades:
+    base: spot
+    cache_ttl: 30
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: historical_trades
+    multi_user_support: true
+    path: /api/v3/historicalTrades
+    purpose: Get older market trades
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - market
+    - trades
+    - historical
+    version: v3
+    weight: 5
+  klines:
+    base: spot
+    cache_ttl: 15
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: klines
+    multi_user_support: true
+    path: /api/v3/klines
+    purpose: Fetch historical OHLCV data for trend, momentum and volatility analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - candles
+    - trend
+    - analysis
+    version: v3
+    weight: 1
+
+  ui_klines:
+    base: spot
+    cache_ttl: 15
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: ui_klines
+    multi_user_support: true
+    path: /api/v3/uiKlines
+    purpose: Fetch OHLCV data optimized for UI/chart display
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - candles
+    - ui
+    - chart
+    version: v3
+    weight: 1
+
+  
+  order_book_depth:
+    base: spot
+    cache_ttl: 10
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: order_book_depth
+    multi_user_support: true
+    path: /api/v3/depth
+    purpose: Fetch full order book depth (bids/asks) for liquidity and imbalance analysis
+    rate_limit_type: IP
+    return_type: dict
+    scope: orderbook
+    signed: false
+    tags:
+    - public
+    - orderbook
+    - liquidity
+    - depth
+    version: v3
+    weight: 5
+  order_book_ticker:
+    base: spot
+    cache_ttl: 3
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: order_book_ticker
+    multi_user_support: true
+    path: /api/v3/ticker/bookTicker
+    purpose: Fetch best bid/ask data for orderbook-based liquidity analysis
+    rate_limit_type: IP
+    return_type: dict
+    scope: orderbook
+    signed: false
+    tags:
+    - public
+    - orderbook
+    - liquidity
+    version: v3
+    weight: 1
+  recent_trades:
+    base: spot
+    cache_ttl: 5
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: recent_trades
+    multi_user_support: true
+    path: /api/v3/trades
+    purpose: Fetch recent trades for a symbol
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - market
+    - trades
+    version: v3
+    weight: 1
+  server_time:
+    base: spot
+    cache_ttl: 3600
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: server_time
+    multi_user_support: true
+    path: /api/v3/time
+    purpose: Get server time for synchronization
+    rate_limit_type: IP
+    return_type: dict
+    scope: system
+    signed: false
+    tags:
+    - public
+    - system
+    - time
+    version: v3
+    weight: 1
+  symbol_price:
+    base: spot
+    cache_ttl: 5
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: symbol_ticker
+    multi_user_support: true
+    path: /api/v3/ticker/price
+    purpose: Get current price for symbol (used in trend/correlation analysis)
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - price
+    - analysis
+    version: v3
+    weight: 1
+  ticker_24h:
+    base: spot
+    cache_ttl: 5
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: ticker_24hr
+    multi_user_support: true
+    path: /api/v3/ticker/24hr
+    purpose: Retrieve 24-hour price change statistics for trend strength metrics
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - ticker
+    - volatility
+    - analysis
+    version: v3
+    weight: 1
+    
+  ticker_24hr_all:
+    base: spot
+    cache_ttl: 30
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: ticker_24hr_all
+    multi_user_support: true
+    path: /api/v3/ticker/24hr
+    purpose: Get 24hr ticker for one or all symbols, supporting volume-based sorting and analysis when fetching all symbols.
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - ticker
+    - volume
+    - analysis
+    - sorting
+    version: v3
+    weight: 40
+    
+    
+    # b-map_public.yaml'a ekle
+  ticker_24hr_limited:
+    base: spot
+    cache_ttl: 30
+    client: SpotClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: ticker_24hr_all_limited
+    multi_user_support: true
+    path: /api/v3/ticker/24hr
+    purpose: Get limited 24hr ticker data (100 symbols max) for faster response
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - ticker
+    - volume
+    - analysis
+    - sorting
+    - limited
+    version: v3
+    weight: 10  # Daha düşük weight
+
+
+  
+  
+public_futures:
+  continuous_klines:
+    base: futures
+    cache_ttl: 15
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: continuous_klines
+    multi_user_support: true
+    path: /fapi/v1/continuousKlines
+    purpose: Fetch continuous futures candlestick data for trend alignment
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - candles
+    - futures
+    version: v1
+    weight: 1
+  funding_rate_history:
+    base: futures
+    cache_ttl: 30
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: funding_rate
+    multi_user_support: true
+    path: /fapi/v1/fundingRate
+    purpose: Historical funding rates for sentiment and funding premium analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: funding
+    signed: false
+    tags:
+    - public
+    - funding
+    - sentiment
+    version: v1
+    weight: 1
+  futures_adl_quantile:
+    base: futures
+    cache_ttl: 60
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: adl_quantile
+    multi_user_support: true
+    path: /fapi/v1/adlQuantile
+    purpose: Retrieve ADL quantile data for liquidation risk metrics
+    rate_limit_type: IP
+    return_type: list
+    scope: risk
+    signed: true
+    tags:
+    - public
+    - futures
+    - liquidation
+    - risk
+    version: v1
+    weight: 5
+    
+  futures_basis:
+    base: futures
+    cache_ttl: 30
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: basis
+    multi_user_support: true
+    path: /futures/data/basis
+    purpose: Fetch futures basis data for arbitrage analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - basis
+    - arbitrage
+    version: v1
+    weight: 5 
+    
+    
+    
+  futures_aggregate_trades:
+    base: futures
+    cache_ttl: 10
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: aggregate_trades
+    multi_user_support: true
+    path: /fapi/v1/aggTrades
+    purpose: Fetch compressed aggregate trades for futures
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - trades
+    - aggregate
+    version: v1
+    weight: 1
+  futures_exchange_info:
+    base: futures
+    cache_ttl: 3600
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: exchange_info
+    multi_user_support: true
+    path: /fapi/v1/exchangeInfo
+    purpose: Get futures exchange information
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - exchange
+    - info
+    version: v1
+    weight: 1
+  futures_historical_trades:
+    base: futures
+    cache_ttl: 30
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: historical_trades
+    multi_user_support: true
+    path: /fapi/v1/historicalTrades
+    purpose: Fetch historical trades for futures symbols
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: true
+    tags:
+    - public
+    - futures
+    - trades
+    - historical
+    version: v1
+    weight: 5
+  
+  futures_index_info:
+    base: futures
+    cache_ttl: 60
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: index_info
+    multi_user_support: true
+    path: /fapi/v1/indexInfo
+    purpose: Get composite index information for futures
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - index
+    - composite
+    version: v1
+    weight: 1
+
+  
+  futures_klines:
+    base: futures
+    cache_ttl: 15
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: klines
+    multi_user_support: true
+    path: /fapi/v1/klines
+    purpose: Fetch standard futures OHLCV data
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - candles
+    - futures
+    version: v1
+    weight: 1
+  futures_mark_price_klines:
+    base: futures
+    cache_ttl: 15
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: mark_price_klines
+    multi_user_support: true
+    path: /fapi/v1/markPriceKlines
+    purpose: Fetch mark price klines for funding analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - candles
+    - mark_price
+    version: v1
+    weight: 1
+  futures_order_book:
+    base: futures
+    cache_ttl: 10
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: order_book
+    multi_user_support: true
+    path: /fapi/v1/depth
+    purpose: Fetch futures order book depth for liquidity analysis
+    rate_limit_type: IP
+    return_type: dict
+    scope: orderbook
+    signed: false
+    tags:
+    - public
+    - orderbook
+    - futures
+    - depth
+    version: v1
+    weight: 5
+  futures_premium_index_composite:
+    base: futures
+    cache_ttl: 10
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: premium_index
+    multi_user_support: true
+    path: /fapi/v1/premiumIndex
+    purpose: Get mark price and funding rate for all symbols at once
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - funding
+    - composite
+    version: v1
+    weight: 1
+  futures_recent_trades:
+    base: futures
+    cache_ttl: 5
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: recent_trades
+    multi_user_support: true
+    path: /fapi/v1/trades
+    purpose: Fetch recent trades for futures symbols
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - trades
+    - market
+    version: v1
+    weight: 1
+  futures_symbol_price:
+    base: futures
+    cache_ttl: 5
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: symbol_ticker
+    multi_user_support: true
+    path: /fapi/v1/ticker/price
+    purpose: Get current futures symbol price for trend and correlation analysis
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - price
+    - analysis
+    version: v1
+    weight: 1
+  futures_ticker_24h:
+    base: futures
+    cache_ttl: 10
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: ticker_24hr
+    multi_user_support: true
+    path: /fapi/v1/ticker/24hr
+    purpose: Retrieve 24-hour ticker data for futures symbols (price change, volume,
+      high/low)
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - ticker
+    - volatility
+    - analysis
+    version: v1
+    weight: 1
+  global_long_short_ratio:
+    base: futures
+    cache_ttl: 300
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: global_long_short_account_ratio
+    multi_user_support: true
+    path: /futures/data/globalLongShortAccountRatio
+    purpose: Fetch global long/short account ratio
+    rate_limit_type: IP
+    return_type: list
+    scope: sentiment
+    signed: false
+    tags:
+    - public
+    - market
+    - ratio
+    - sentiment
+    version: v1
+    weight: 5
+  index_price_klines:
+    base: futures
+    cache_ttl: 15
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: index_price_klines
+    multi_user_support: true
+    path: /fapi/v1/indexPriceKlines
+    purpose: Fetch index price candlestick data for regime and volatility models
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - candles
+    - futures
+    version: v1
+    weight: 1
+  liquidation_orders:
+    base: futures
+    cache_ttl: 20
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: force_orders
+    multi_user_support: true
+    path: /fapi/v1/allForceOrders
+    purpose: Fetch forced liquidation data for stress and volatility metrics
+    rate_limit_type: IP
+    return_type: list
+    scope: risk
+    signed: false
+    tags:
+    - public
+    - liquidation
+    - risk
+    - futures
+    version: v1
+    weight: 20
+  long_short_ratio:
+    base: futures
+    cache_ttl: 300
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: long_short_account_ratio
+    multi_user_support: true
+    path: /futures/data/globalLongShortAccountRatio
+    purpose: Retrieve global long vs short ratio for sentiment analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: sentiment
+    signed: false
+    tags:
+    - public
+    - sentiment
+    - futures
+    version: v1
+    weight: 5
+  mark_price:
+    base: futures
+    cache_ttl: 2
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: mark_price
+    multi_user_support: true
+    path: /fapi/v1/premiumIndex
+    purpose: Fetch mark price and funding rate for futures analysis
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - futures
+    - funding
+    - analysis
+    version: v1
+    weight: 1
+  open_interest:
+    base: futures
+    cache_ttl: 10
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: open_interest
+    multi_user_support: true
+    path: /fapi/v1/openInterest
+    purpose: Retrieve open interest data for liquidity/trend confirmation
+    rate_limit_type: IP
+    return_type: dict
+    scope: market
+    signed: false
+    tags:
+    - public
+    - open_interest
+    - liquidity
+    - futures
+    version: v1
+    weight: 1
+  open_interest_history:
+    base: futures
+    cache_ttl: 3600
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: open_interest_hist
+    multi_user_support: true
+    path: /futures/data/openInterestHist
+    purpose: Fetch historical open interest data
+    rate_limit_type: IP
+    return_type: list
+    scope: market
+    signed: false
+    tags:
+    - public
+    - market
+    - open_interest
+    version: v1
+    weight: 1
+  taker_buy_sell_volume:
+    base: futures
+    cache_ttl: 60
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: taker_buy_sell_volume
+    multi_user_support: true
+    path: /futures/data/takerlongshortRatio
+    purpose: Fetch taker buy/sell volume for microstructure analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: volume
+    signed: false
+    tags:
+    - public
+    - futures
+    - volume
+    - orderflow
+    version: v1
+    weight: 10
+  taker_long_short_ratio:
+    base: futures
+    cache_ttl: 60
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: taker_long_short_ratio
+    multi_user_support: true
+    path: /futures/data/takerlongshortRatio
+    purpose: Fetch taker long/short ratio for sentiment and momentum analysis
+    rate_limit_type: IP
+    return_type: list
+    scope: sentiment
+    signed: false
+    tags:
+    - public
+    - futures
+    - sentiment
+    - ratio
+    version: v1
+    weight: 10
+  top_long_short_accounts:
+    base: futures
+    cache_ttl: 300
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: top_long_short_account_ratio
+    multi_user_support: true
+    path: /futures/data/topLongShortAccountRatio
+    purpose: Fetch top trader long/short account ratio
+    rate_limit_type: IP
+    return_type: list
+    scope: sentiment
+    signed: false
+    tags:
+    - public
+    - market
+    - ratio
+    - sentiment
+    version: v1
+    weight: 5
+  top_long_short_positions:
+    base: futures
+    cache_ttl: 300
+    client: FuturesClient
+    enabled: true
+    http_method: GET
+    job_type: io
+    method: top_long_short_position_ratio
+    multi_user_support: true
+    path: /futures/data/topLongShortPositionRatio
+    purpose: Fetch top trader long/short position ratio
+    rate_limit_type: IP
+    return_type: list
+    scope: sentiment
+    signed: false
+    tags:
+    - public
+    - market
+    - ratio
+    - sentiment
+    version: v1
+    weight: 5
+    

@@ -93,7 +93,7 @@ class BinanceHTTPClient:
             f"rate_limit:{self.config.get('requests_per_second')}req/s"
         )
 
-        
+
 #-------------------------------------
 #---------apikey işlemleri------------
     # User info getter
@@ -241,7 +241,6 @@ class BinanceHTTPClient:
             
 
 
-
     # Enhanced account methods for multi-user support
     async def get_account_info(self, futures: bool = False) -> Dict[str, Any]:
         """
@@ -339,7 +338,6 @@ class BinanceHTTPClient:
                 raise ValueError(f"Missing required config key: {key}")
 
 
-##2
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(
@@ -574,8 +572,6 @@ class BinanceHTTPClient:
             raise BinanceRequestError(f"HTTP {status_code}: Invalid response: {error_data}")
             
 
-
-
     @asynccontextmanager
     async def _concurrent_request_limiter(self):
         """Limit concurrent requests using semaphore."""
@@ -728,6 +724,22 @@ class BinanceHTTPClient:
 
 
 
+    # binance_request.py - send_request metodunu kontrol et
+    # 
+    async def send_request(self, method: str, endpoint: str, signed: bool = False, 
+                          params: dict = None, futures: bool = False, **kwargs):
+        """Send request to Binance API - FUTURES PARAMETRESİ EKLENDİ"""
+        
+        if params is None:
+            params = {}
+        
+        logger.debug(f"🔄 Sending {method} request to {endpoint}, signed: {signed}, futures: {futures}")
+        
+        # ✅ FUTURES PARAMETRESİ _request'e iletilmeli
+        return await self._request(method, endpoint, params=params, signed=signed, futures=futures, **kwargs)
+        
+
+
     # Public request methods
     async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None,
                   signed: bool = False, futures: bool = False, timeout: Optional[float] = None) -> Any:
@@ -788,8 +800,6 @@ class BinanceHTTPClient:
         await self.close()
  
  
-     
-    
     # yardımcı metodlar - (indentation)
     async def get_server_time(self, futures: bool = False) -> Dict[str, Any]:
         """Get server time for clock synchronization."""
@@ -833,7 +843,7 @@ class TimeoutAwareClient:
             raise ConnectionError(f"Request timeout after {self.timeout}s")
 
 
-# binance_request.py sonuna ek
+# binance_request.py sonuna eklenen class düzeltildi:
 class UserAwareRateLimiter:
     """User-specific rate limiting"""
     
@@ -888,6 +898,12 @@ class UserAwareRateLimiter:
             
             return True
     
+    async def release(self, user_id: int, endpoint: str, weight: int = 1) -> None:
+        """Release acquired resources - binance_a.py için gerekli"""
+        # Bu implementasyonda release gerekli değil, acquire zaten kontrol ediyor
+        # Ama binance_a.py'deki await rate_limiter.release() çağrısı için stub
+        pass
+    
     async def get_user_stats(self, user_id: int) -> Dict[str, Any]:
         """Get rate limit statistics for user"""
         if user_id not in self.user_limits:
@@ -900,8 +916,7 @@ class UserAwareRateLimiter:
             'weight_used_1m': user_limit['weight_used_1m'],
             'limits': self.default_limits
         }
-
-
+        
 
 
 """ # utils/binance/binance_request.py

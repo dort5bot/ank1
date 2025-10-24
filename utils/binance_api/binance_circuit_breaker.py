@@ -437,103 +437,15 @@ class CircuitBreaker:
             logger.exception("CircuitBreaker hook raised an exception", exc_info=True)
 
 
-# ---------- API Key Bazlı Circuit Breaker ----------
-class APIKeyCircuitBreakerManager:
+
+# TEK BİR MANAGER
+# Ana manager olarak kalacak
+# İçinde hem API key hem user+endpoint desteği olacak
+class CircuitBreakerManager:
     """
-    API key bazlı circuit breaker yönetimi.
-    Her API key için ayrı circuit breaker instance'ı yönetir.
+    Unified Circuit Breaker Manager - hem API key hem user+endpoint bazlı yönetim.
     """
     
-    def __init__(
-        self,
-        failure_threshold: int = 5,
-        reset_timeout: float = 60.0,
-        half_open_timeout: float = 30.0,
-        max_half_open_calls: int = 1,
-        failure_predicate: Optional[FailurePredicate] = None,
-        max_cache_size: int = 1000,
-        ttl_seconds: int = 3600,
-    ):
-        self._lock = asyncio.Lock()
-        self._breaker_map: Dict[str, CircuitBreaker] = {}
-        self._access_times: Dict[str, float] = {}
-        
-        self._config = {
-            "failure_threshold": failure_threshold,
-            "reset_timeout": reset_timeout,
-            "half_open_timeout": half_open_timeout,
-            "max_half_open_calls": max_half_open_calls,
-            "failure_predicate": failure_predicate,
-        }
-        
-        self.max_cache_size = max_cache_size
-        self.ttl_seconds = ttl_seconds
-
-    async def _cleanup_expired(self):
-        """TTL süresi geçen breaker'ları temizle"""
-        now = time.time()
-        keys_to_delete = []
-        
-        async with self._lock:
-            for api_key, last_access in self._access_times.items():
-                if now - last_access > self.ttl_seconds:
-                    keys_to_delete.append(api_key)
-            
-            for key in keys_to_delete:
-                self._breaker_map.pop(key, None)
-                self._access_times.pop(key, None)
-            
-            # LRU cleanup
-            while len(self._breaker_map) > self.max_cache_size:
-                # En eski erişim zamanlı key'i bul
-                oldest_key = min(self._access_times.items(), key=lambda x: x[1])[0]
-                self._breaker_map.pop(oldest_key, None)
-                self._access_times.pop(oldest_key, None)
-
-    def get_breaker_for_api_key(self, api_key: str) -> CircuitBreaker:
-        """
-        API key için circuit breaker döndürür.
-        NOT: Bu sync method, async değil.
-        """
-        # Kısa hash kullan (güvenlik için full key saklama)
-        key_hash = f"api_{hash(api_key) & 0xFFFFFFFF}"
-        
-        if key_hash in self._breaker_map:
-            self._access_times[key_hash] = time.time()
-            return self._breaker_map[key_hash]
-        
-        # Yeni breaker oluştur
-        name = f"apikey_cb:{key_hash}"
-        breaker = CircuitBreaker(name=name, **self._config)
-        self._breaker_map[key_hash] = breaker
-        self._access_times[key_hash] = time.time()
-        
-        return breaker
-
-    async def execute_with_api_key(
-        self, 
-        api_key: str, 
-        func: SyncOrAsyncCallable, 
-        *args, **kwargs
-    ) -> Any:
-        """
-        API key ile circuit breaker koruması altında fonksiyon çalıştırır.
-        """
-        await self._cleanup_expired()
-        breaker = self.get_breaker_for_api_key(api_key)
-        return await breaker.execute(func, *args, **kwargs)
-
-    async def get_api_key_metrics(self) -> Dict[str, Dict[str, Any]]:
-        """Tüm API key breaker'larının metrics'larını döndürür"""
-        await self._cleanup_expired()
-        return {
-            key: breaker.get_metrics() 
-            for key, breaker in self._breaker_map.items()
-        }
-
-
-
-class CircuitBreakerManager:
     def __init__(
         self,
         failure_threshold: int = 5,
@@ -546,19 +458,26 @@ class CircuitBreakerManager:
         on_close: Optional[HookCallable] = None,
         on_failure: Optional[HookCallable] = None,
         on_success: Optional[HookCallable] = None,
-        max_cache_size: int = 1000,  # 🔁 LRU cache için maksimum breaker sayısı
-        ttl_seconds: int = 3600,     # 🔁 TTL: circuit breaker 1 saat boyunca kullanılmazsa silinir
+        max_cache_size: int = 1000,
+        ttl_seconds: int = 3600,
+        use_api_keys: bool = True,  # 🔑 API key bazlı yönetim aktif mi?
     ):
         """
         Args:
-            max_cache_size: CircuitBreaker cache'inde tutulacak maksimum kullanıcı+endpoint sayısı.
-            ttl_seconds: Son erişimden itibaren bu saniye kadar kullanılmayan circuit breaker temizlenir.
-            Diğer args CircuitBreaker config ile aynıdır.
+            use_api_keys: True ise API key bazlı, False ise user+endpoint bazlı çalışır
+            Diğer parametreler her iki mod için ortak
         """
         self._lock = asyncio.Lock()
-        self._breaker_map: "OrderedDict[Tuple[str,str], Tuple[CircuitBreaker, float]]" = OrderedDict()
-        # key -> (breaker, last_access_time)
+        self.use_api_keys = use_api_keys
+        
+        # User+endpoint bazlı breaker'lar için
+        self._user_breaker_map: OrderedDict[Tuple[str, str], Tuple[CircuitBreaker, float]] = OrderedDict()
+        
+        # API key bazlı breaker'lar için  
+        self._api_key_breaker_map: Dict[str, CircuitBreaker] = {}
+        self._api_key_access_times: Dict[str, float] = {}
 
+        # Ortak config
         self._config = {
             "failure_threshold": failure_threshold,
             "reset_timeout": reset_timeout,
@@ -575,55 +494,143 @@ class CircuitBreakerManager:
         self.max_cache_size = max_cache_size
         self.ttl_seconds = ttl_seconds
 
-    async def _evict_expired_and_lru(self):
-        """
-        TTL süresi geçen veya LRU sınırını aşan breaker'ları sil.
-        """
+    # 🔄 ORTAK CLEANUP METODLARI
+    
+    async def _cleanup_expired_api_keys(self):
+        """API key breaker'ları için TTL temizleme"""
+        now = time.time()
+        keys_to_delete = []
+        
+        async with self._lock:
+            for api_key, last_access in self._api_key_access_times.items():
+                if now - last_access > self.ttl_seconds:
+                    keys_to_delete.append(api_key)
+            
+            for key in keys_to_delete:
+                self._api_key_breaker_map.pop(key, None)
+                self._api_key_access_times.pop(key, None)
+            
+            # LRU cleanup
+            while len(self._api_key_breaker_map) > self.max_cache_size:
+                oldest_key = min(self._api_key_access_times.items(), key=lambda x: x[1])[0]
+                self._api_key_breaker_map.pop(oldest_key, None)
+                self._api_key_access_times.pop(oldest_key, None)
+
+    async def _cleanup_expired_users(self):
+        """User breaker'ları için TTL temizleme"""
         now = time.time()
         keys_to_delete = []
 
         # TTL kontrolü
-        for key, (_, last_access) in self._breaker_map.items():
+        for key, (_, last_access) in self._user_breaker_map.items():
             if now - last_access > self.ttl_seconds:
                 keys_to_delete.append(key)
 
         for key in keys_to_delete:
-            del self._breaker_map[key]
+            del self._user_breaker_map[key]
 
-        # LRU kontrolü: max_cache_size aşıyorsa en eski(ilk) elemanları sil
-        while len(self._breaker_map) > self.max_cache_size:
-            self._breaker_map.popitem(last=False)  # first (en eski) elemanı çıkar
+        # LRU kontrolü
+        while len(self._user_breaker_map) > self.max_cache_size:
+            self._user_breaker_map.popitem(last=False)
 
-    async def get_breaker(self, user_id: str, endpoint: str = "default") -> CircuitBreaker:
+    async def _cleanup_all(self):
+        """Tüm cache'leri temizle"""
+        await self._cleanup_expired_api_keys()
+        await self._cleanup_expired_users()
+
+    # 🔑 API KEY BAZLI METODLAR
+    
+    async def get_breaker_for_api_key(self, api_key: str) -> CircuitBreaker:
+        """
+        API key için circuit breaker döndürür.
+        Artık ASYNC - thread safe
+        """
+        await self._cleanup_expired_api_keys()
+        
+        # Kısa hash kullan (güvenlik için full key saklama)
+        key_hash = f"api_{hash(api_key) & 0xFFFFFFFF}"
+        
+        async with self._lock:
+            if key_hash in self._api_key_breaker_map:
+                self._api_key_access_times[key_hash] = time.time()
+                return self._api_key_breaker_map[key_hash]
+            
+            # Yeni breaker oluştur
+            name = f"apikey_cb:{key_hash}"
+            breaker = CircuitBreaker(name=name, **self._config)
+            self._api_key_breaker_map[key_hash] = breaker
+            self._api_key_access_times[key_hash] = time.time()
+            
+            return breaker
+
+    async def execute_with_api_key(
+        self, 
+        api_key: str, 
+        func: SyncOrAsyncCallable, 
+        *args, **kwargs
+    ) -> Any:
+        """
+        API key ile circuit breaker koruması altında fonksiyon çalıştırır.
+        """
+        breaker = await self.get_breaker_for_api_key(api_key)
+        return await breaker.execute(func, *args, **kwargs)
+
+    # 👤 USER BAZLI METODLAR
+    
+    async def get_breaker_for_user(self, user_id: str, endpoint: str = "default") -> CircuitBreaker:
         """
         Kullanıcı+endpoint bazında breaker objesini döner.
-        Yoksa oluşturur, varsa erişimi günceller (LRU).
         """
         key = (user_id, endpoint)
         async with self._lock:
-            await self._evict_expired_and_lru()
+            await self._cleanup_expired_users()
 
-            if key in self._breaker_map:
+            if key in self._user_breaker_map:
                 # LRU için order güncelle
-                breaker, _ = self._breaker_map.pop(key)
-                self._breaker_map[key] = (breaker, time.time())
+                breaker, _ = self._user_breaker_map.pop(key)
+                self._user_breaker_map[key] = (breaker, time.time())
                 return breaker
 
             # Yeni breaker oluştur
             name = f"cb:{user_id}:{endpoint}"
             breaker = CircuitBreaker(name=name, **self._config)
-            self._breaker_map[key] = (breaker, time.time())
+            self._user_breaker_map[key] = (breaker, time.time())
             return breaker
 
-    async def execute(self, user_id: str, endpoint: str, func: Callable[..., Any], *args, **kwargs):
+    async def execute_with_user(
+        self, 
+        user_id: str, 
+        endpoint: str, 
+        func: Callable[..., Any], 
+        *args, **kwargs
+    ):
         """
-        Tek satırda breaker'lı fonksiyon çağrısı (async/sync farketmez)
+        User+endpoint ile circuit breaker koruması altında fonksiyon çalıştırır.
         """
-        breaker = await self.get_breaker(user_id, endpoint)
+        breaker = await self.get_breaker_for_user(user_id, endpoint)
         return await breaker.execute(func, *args, **kwargs)
 
-
+    # 🎯 AKILLI EXECUTE - OTOMATİK MOD SEÇİMİ
     
+    async def execute(
+        self, 
+        identifier: str, 
+        endpoint: str = "default",
+        func: Optional[SyncOrAsyncCallable] = None,
+        *args, **kwargs
+    ) -> Any:
+        """
+        Akıllı execute: use_api_keys ayarına göre otomatik mod seçer.
+        
+        Args:
+            identifier: API key (use_api_keys=True) veya user_id (use_api_keys=False)
+            endpoint: Sadece user modunda kullanılır
+        """
+        if self.use_api_keys:
+            return await self.execute_with_api_key(identifier, func, *args, **kwargs)
+        else:
+            return await self.execute_with_user(identifier, endpoint, func, *args, **kwargs)
+
     async def execute_with_user_id(
         self, 
         user_id: int, 
@@ -632,94 +639,123 @@ class CircuitBreakerManager:
         *args, **kwargs
     ) -> Any:
         """
-        User ID ile circuit breaker koruması altında fonksiyon çalıştırır.
-        APIKeyManager üzerinden API key alır ve API key bazlı breaker kullanır.
+        User ID ile circuit breaker - APIKeyManager entegrasyonlu.
+        Backward compatibility için korunuyor.
         """
-        if APIKeyManager is None:
-            # Fallback: normal user_id bazlı breaker
-            return await self.execute(str(user_id), endpoint, func, *args, **kwargs)
-        
-        try:
-            # API key'i al
-            api_manager = APIKeyManager.get_instance()
-            creds = await api_manager.get_apikey(user_id)
-            if not creds:
-                raise ValueError(f"API key not found for user {user_id}")
-                
-            api_key, secret_key = creds
-            
-            # API key bazlı breaker manager oluştur veya global kullan
-            if not hasattr(self, '_api_key_cb_manager'):
-                self._api_key_cb_manager = APIKeyCircuitBreakerManager(**self._config)
-                
-            return await self._api_key_cb_manager.execute_with_api_key(
-                api_key, func, *args, **kwargs
-            )
-        except Exception as e:
-            logger.error(f"Error in execute_with_user_id: {e}")
-            # Fallback
-            return await self.execute(str(user_id), endpoint, func, *args, **kwargs)
+        if self.use_api_keys and APIKeyManager is not None:
+            try:
+                # API key'i al
+                api_manager = APIKeyManager.get_instance()
+                creds = await api_manager.get_apikey(user_id)
+                if not creds:
+                    raise ValueError(f"API key not found for user {user_id}")
+                    
+                api_key, secret_key = creds
+                return await self.execute_with_api_key(api_key, func, *args, **kwargs)
+            except Exception as e:
+                logger.error(f"Error in execute_with_user_id: {e}")
+                # Fallback to user mode
+                return await self.execute_with_user(str(user_id), endpoint, func, *args, **kwargs)
+        else:
+            # Direct user mode
+            return await self.execute_with_user(str(user_id), endpoint, func, *args, **kwargs)
 
-
-    async def force_open(self, user_id: str, endpoint: str = "default"):
-        breaker = await self.get_breaker(user_id, endpoint)
+    # 🎛️ MANAGEMENT METODLARI (Her İki Mod İçin)
+    
+    async def force_open(self, identifier: str, endpoint: str = "default"):
+        """Breaker'ı OPEN state'e zorla"""
+        if self.use_api_keys:
+            breaker = await self.get_breaker_for_api_key(identifier)
+        else:
+            breaker = await self.get_breaker_for_user(identifier, endpoint)
         await breaker.force_open()
 
-    async def reset(self, user_id: str, endpoint: str = "default"):
-        breaker = await self.get_breaker(user_id, endpoint)
+    async def reset(self, identifier: str, endpoint: str = "default"):
+        """Breaker'ı resetle"""
+        if self.use_api_keys:
+            breaker = await self.get_breaker_for_api_key(identifier)
+        else:
+            breaker = await self.get_breaker_for_user(identifier, endpoint)
         await breaker.reset()
 
-    async def remove(self, user_id: str, endpoint: str = "default"):
-        """
-        İsteğe bağlı: belirli bir breaker'ı cache'den tamamen çıkar.
-        """
-        key = (user_id, endpoint)
+    async def remove(self, identifier: str, endpoint: str = "default"):
+        """Breaker'ı cache'den kaldır"""
         async with self._lock:
-            self._breaker_map.pop(key, None)
+            if self.use_api_keys:
+                key_hash = f"api_{hash(identifier) & 0xFFFFFFFF}"
+                self._api_key_breaker_map.pop(key_hash, None)
+                self._api_key_access_times.pop(key_hash, None)
+            else:
+                key = (identifier, endpoint)
+                self._user_breaker_map.pop(key, None)
 
     async def cleanup(self):
-        """
-        İsteğe bağlı: dışardan manuel cache temizleme tetiklemesi.
-        """
-        async with self._lock:
-            await self._evict_expired_and_lru()
+        """Tüm cache'leri temizle"""
+        await self._cleanup_all()
 
-    def get_all_states(self) -> Dict[str, Dict]:
-        """
-        Breaker durumlarının anlık snapshot'u (sync)
-        """
+    # 📊 METRICS VE MONITORING
+    
+    async def get_api_key_metrics(self) -> Dict[str, Dict[str, Any]]:
+        """API key breaker'larının metrics'larını döndürür"""
+        await self._cleanup_expired_api_keys()
         return {
-            f"{user_id}:{endpoint}": breaker.get_state()
-            for (user_id, endpoint), (breaker, _) in self._breaker_map.items()
+            key: breaker.get_metrics() 
+            for key, breaker in self._api_key_breaker_map.items()
         }
 
-#
-    # CircuitBreakerManager
+    async def get_user_metrics(self) -> Dict[str, Dict[str, Any]]:
+        """User breaker'larının metrics'larını döndürür"""
+        await self._cleanup_expired_users()
+        return {
+            f"{user_id}:{endpoint}": breaker.get_metrics()
+            for (user_id, endpoint), (breaker, _) in self._user_breaker_map.items()
+        }
+
     async def get_metrics(self) -> Dict[str, Dict[str, Any]]:
         """
         Tüm breaker'ların metrics'larını topla.
         """
-        async with self._lock:
-            return {
-                f"{user_id}:{endpoint}": breaker.get_metrics()
-                for (user_id, endpoint), (breaker, _) in self._breaker_map.items()
-            }
+        api_metrics = await self.get_api_key_metrics()
+        user_metrics = await self.get_user_metrics()
+        return {**api_metrics, **user_metrics}
 
     async def get_breaker_count(self) -> int:
         """Toplam breaker sayısını döner."""
         async with self._lock:
-            return len(self._breaker_map)
-
+            return len(self._api_key_breaker_map) + len(self._user_breaker_map)
 
     async def force_close_all(self) -> None:
         """Tüm breaker'ları CLOSED state'e zorla."""
         async with self._lock:
-            for (user_id, endpoint), (breaker, _) in self._breaker_map.items():
-                # Sadece reset() yerine state history için manuel kayıt
+            # API key breaker'ları
+            for breaker in self._api_key_breaker_map.values():
                 previous_state = breaker.state.state
                 if previous_state != "CLOSED":
                     breaker._record_state_change(previous_state, "CLOSED", "Manual force close all")
                 await breaker.reset()
+            
+            # User breaker'ları
+            for (user_id, endpoint), (breaker, _) in self._user_breaker_map.items():
+                previous_state = breaker.state.state
+                if previous_state != "CLOSED":
+                    breaker._record_state_change(previous_state, "CLOSED", "Manual force close all")
+                await breaker.reset()
+
+    def get_all_states(self) -> Dict[str, Dict]:
+        """
+        Tüm breaker durumlarının anlık snapshot'u (sync)
+        """
+        states = {}
+        
+        # API key states
+        for key, breaker in self._api_key_breaker_map.items():
+            states[f"api_{key}"] = breaker.get_state()
+        
+        # User states
+        for (user_id, endpoint), (breaker, _) in self._user_breaker_map.items():
+            states[f"user_{user_id}:{endpoint}"] = breaker.get_state()
+            
+        return states
 
 
 # utils/binance_api/circuit_breaker.py'ye ek
