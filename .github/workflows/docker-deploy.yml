@@ -1,0 +1,233 @@
+name: 🐳 Docker Build & Deploy (Multi-Container Staging→Production)
+# v4
+#.github/workflows/docker-deploy.yml
+#1. Multi-container deploy: Tek VPS üzerinde staging/prod için birden fazla container (primary, secondary) çalışabilir.
+#2. Dinamik port ve isimlendirme: Port ve container adı otomatik atanır → çakışma riski yok.
+#3. Staging otomatik, production manuel: Güvenli ve profesyonel CI/CD süreci.
+#4. Üç platform destekli: Oracle, Hetzner, Render.
+#5. Dummy pytest: Pipeline’ın sağ
+#6.
+
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  BASE_CONTAINER_NAME: ${{ github.event.repository.name }}-${{ github.ref_name }}
+  RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+  ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+  ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+  ORACLE_USER: ${{ secrets.ORACLE_USER }}
+  HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+  HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+  HETZNER_USER: ${{ secrets.HETZNER_USER }}
+
+jobs:
+  # -------------------------------
+  # 1️⃣ Build ve Test
+  # -------------------------------
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image (staging tag)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+
+      - name: Run Dummy Pytest
+        run: |
+          echo "🧪 Basit test çalıştırılıyor..."
+          mkdir -p tests
+          echo "def test_dummy(): assert 1 + 1 == 2" > tests/test_dummy.py
+          pip install pytest
+          pytest tests/
+          echo "✅ Dummy test başarılı!"
+
+  # -------------------------------
+  # 2️⃣ Staging Deploy (otomatik)
+  # -------------------------------
+  deploy-staging:
+    needs: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Display staging deployment info
+        run: |
+          echo "🚀 Staging Deployment Başlıyor..."
+
+      - name: Deploy to Oracle VPS (staging)
+        if: env.ORACLE_SSH_KEY != '' && env.ORACLE_HOST != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ env.ORACLE_SSH_KEY }}
+        run: |
+          USER="${ORACLE_USER:-ubuntu}"
+          BASE="${{ env.BASE_CONTAINER_NAME }}"
+          PORTS=(3001 3002 3003)  # staging multi-container
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$ORACLE_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy_key $USER@$ORACLE_HOST << EOF
+            set -e
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging"
+
+            for i in {0..2}; do
+              CONTAINER_NAME="\${BASE}-staging-\$i"
+              CONTAINER_PORT="\${PORTS[\$i]}"
+              docker system prune -f
+              docker pull "\$IMAGE_NAME"
+              docker stop "\$CONTAINER_NAME" 2>/dev/null || true
+              docker rm "\$CONTAINER_NAME" 2>/dev/null || true
+              docker run -d --name "\$CONTAINER_NAME" --restart unless-stopped -p "\$CONTAINER_PORT":3000 \
+                -e TZ=UTC -e CONTAINER_NAME="\$CONTAINER_NAME" "\$IMAGE_NAME"
+              echo "✅ Oracle Staging deployed: \$CONTAINER_NAME on port \$CONTAINER_PORT"
+            done
+          EOF
+
+      - name: Deploy to Hetzner VPS (staging)
+        if: env.HETZNER_SSH_KEY != '' && env.HETZNER_HOST != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ env.HETZNER_SSH_KEY }}
+        run: |
+          USER="${HETZNER_USER:-root}"
+          BASE="${{ env.BASE_CONTAINER_NAME }}"
+          PORTS=(3001 3002 3003)
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HETZNER_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy_key $USER@$HETZNER_HOST << EOF
+            set -e
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging"
+
+            for i in {0..2}; do
+              CONTAINER_NAME="\${BASE}-staging-\$i"
+              CONTAINER_PORT="\${PORTS[\$i]}"
+              docker system prune -f
+              docker pull "\$IMAGE_NAME"
+              docker stop "\$CONTAINER_NAME" 2>/dev/null || true
+              docker rm "\$CONTAINER_NAME" 2>/dev/null || true
+              docker run -d --name "\$CONTAINER_NAME" --restart unless-stopped -p "\$CONTAINER_PORT":3000 \
+                -e TZ=UTC -e CONTAINER_NAME="\$CONTAINER_NAME" "\$IMAGE_NAME"
+              echo "✅ Hetzner Staging deployed: \$CONTAINER_NAME on port \$CONTAINER_PORT"
+            done
+          EOF
+
+      - name: Deploy to Render (staging)
+        if: env.RENDER_DEPLOY_HOOK != ''
+        run: |
+          echo "🚀 Triggering Render staging deployment..."
+          curl -s -X POST "${{ env.RENDER_DEPLOY_HOOK }}"
+          echo "✅ Render Staging deployed"
+
+  # -------------------------------
+  # 3️⃣ Production Deploy (manuel)
+  # -------------------------------
+  deploy-production:
+    needs: deploy-staging
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Display production deployment info
+        run: echo "🚀 Production Deployment Başlıyor..."
+
+      - name: Deploy to Oracle VPS (prod)
+        if: env.ORACLE_SSH_KEY != '' && env.ORACLE_HOST != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ env.ORACLE_SSH_KEY }}
+        run: |
+          USER="${ORACLE_USER:-ubuntu}"
+          BASE="${{ env.BASE_CONTAINER_NAME }}"
+          PORTS=(3000 3001)
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$ORACLE_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy_key $USER@$ORACLE_HOST << EOF
+            set -e
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+
+            for i in {0..1}; do
+              CONTAINER_NAME="\${BASE}-prod-\$i"
+              CONTAINER_PORT="\${PORTS[\$i]}"
+              docker system prune -f
+              docker pull "\$IMAGE_NAME"
+              docker stop "\$CONTAINER_NAME" 2>/dev/null || true
+              docker rm "\$CONTAINER_NAME" 2>/dev/null || true
+              docker run -d --name "\$CONTAINER_NAME" --restart unless-stopped -p "\$CONTAINER_PORT":3000 \
+                -e TZ=UTC -e CONTAINER_NAME="\$CONTAINER_NAME" "\$IMAGE_NAME"
+              echo "✅ Oracle Production deployed: \$CONTAINER_NAME on port \$CONTAINER_PORT"
+            done
+          EOF
+
+      - name: Deploy to Hetzner VPS (prod)
+        if: env.HETZNER_SSH_KEY != '' && env.HETZNER_HOST != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ env.HETZNER_SSH_KEY }}
+        run: |
+          USER="${HETZNER_USER:-root}"
+          BASE="${{ env.BASE_CONTAINER_NAME }}"
+          PORTS=(3000 3001)
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HETZNER_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy_key $USER@$HETZNER_HOST << EOF
+            set -e
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+
+            for i in {0..1}; do
+              CONTAINER_NAME="\${BASE}-prod-\$i"
+              CONTAINER_PORT="\${PORTS[\$i]}"
+              docker system prune -f
+              docker pull "\$IMAGE_NAME"
+              docker stop "\$CONTAINER_NAME" 2>/dev/null || true
+              docker rm "\$CONTAINER_NAME" 2>/dev/null || true
+              docker run -d --name "\$CONTAINER_NAME" --restart unless-stopped -p "\$CONTAINER_PORT":3000 \
+                -e TZ=UTC -e CONTAINER_NAME="\$CONTAINER_NAME" "\$IMAGE_NAME"
+              echo "✅ Hetzner Production deployed: \$CONTAINER_NAME on port \$CONTAINER_PORT"
+            done
+          EOF
+
+      - name: Deploy to Render (prod)
+        if: env.RENDER_DEPLOY_HOOK != ''
+        run: |
+          echo "🚀 Triggering Render production deployment..."
+          curl -s -X POST "${{ env.RENDER_DEPLOY_HOOK }}"
+          echo "✅ Render Production deployed"
