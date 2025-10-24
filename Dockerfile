@@ -1,96 +1,70 @@
-#v4
-#Dockerfile
+#v-2
+# pip install --upgrade pip setuptools wheel satırında --no-cache-dir ekle → daha az katman şişmesi olur
+# builder aşamasında gcc/g++ gibi paketleri kuruyorsun ama runtime’da aslında gerek kalmıyor. Yani image küçültmek için sadece build aşamasında bırakıldı 
 
-#	python:3.11-slim tabanlı
-#	Multi-stage build
-#	--no-cache-dir, --no-install-recommends kullanımı
-#	entrypoint.sh ile esnek başlangıç
-#	.dockerignore uyumlu
-#	BuildKit uyumlu
-#	Minimal ve güvenli
-
-#Dockerfile
-# ----------------------
-# Build Aşaması
-# ----------------------
+# Build aşaması
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Build bağımlılıklarını kur (minimal ve temiz)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Build bağımlılıklarını kur
+RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     python3-dev \
     libc-dev \
     libffi-dev \
     curl \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Pip araçlarını güncelle (cache’siz)
+# Pip'i güncelle
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Bağımlılık dosyasını kopyala
+# Bağımlılıkları kopyala ve wheel olarak derle
 COPY requirements.txt .
-
-# Wheel olarak bağımlılıkları derle
 RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
 
-# requirements.txt'yi de kopyala (runtime için)
+# requirements.txt'yi de wheels klasörüne kopyala
 RUN cp requirements.txt /app/wheels/
 
 
-# ----------------------
-# Runtime Aşaması
-# ----------------------
+# Runtime aşaması
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Sadece gerekli bağımlılıkları kur
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Sadece gerekli runtime bağımlılıkları
+RUN apt-get update && apt-get install -y \
     curl \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Uygulama için kullanıcı oluştur
+# Uygulama kullanıcısı oluştur
 RUN groupadd --gid 1001 appgroup && \
-    useradd --uid 1001 --gid appgroup --shell /usr/sbin/nologin --create-home appuser
+    useradd --uid 1001 --gid appgroup --shell /bin/bash --create-home appuser
 
-# Python ayarları
+# Python optimizasyonları
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPYCACHEPREFIX=/tmp \
     PIP_NO_CACHE_DIR=1
 
-# Build aşamasından wheel'ları kopyala
+# Wheel'ları ve requirements.txt'yi kopyala
 COPY --from=builder /app/wheels /wheels
 
-# Bağımlılıkları kur ve wheel'ları temizle
+# Wheel'lardan paketleri kur
 RUN pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
     && rm -rf /wheels
 
-# Gerekli uygulama dosyalarını kopyala (sadece gerekenleri .dockerignore ile uyumlu)
-COPY --chown=appuser:appgroup main.py . 
-COPY --chown=appuser:appgroup app/ ./app/
-COPY --chown=appuser:appgroup entrypoint.sh /entrypoint.sh
+# Uygulama kodunu kopyala
+COPY --chown=appuser:appgroup . .
 
-# Entrypoint scriptini çalıştırılabilir yap
-RUN chmod +x /entrypoint.sh
-
-# Metadata bilgileri (isteğe bağlı ama faydalı)
-LABEL maintainer="sen@example.com" \
-      org.opencontainers.image.source="https://github.com/kullanici/proje" \
-      org.opencontainers.image.licenses="MIT"
-
-# Health check (isteğe bağlı endpoint varsa)
+# Health check ve port ayarları
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
-# Uygulama kullanıcısına geç
+# Çalışma kullanıcısını ayarla
 USER appuser
 
-# Entrypoint ile başlat
-ENTRYPOINT ["/entrypoint.sh"]
+# Çalıştırma komutu
+CMD ["python", "main.py"]
