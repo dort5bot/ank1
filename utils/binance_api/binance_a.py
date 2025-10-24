@@ -112,31 +112,11 @@ class BinanceAggregator:
     _instance = None
     _instance_params = None
 
-
-    @classmethod
-    def get_instance(cls, base_path: str = None, config: Optional["BinanceConfig"] = None):
-        if cls._instance is None:
-            if base_path is None:
-                base_path = os.path.abspath(os.path.join(os.path.dirname(__file__)))
-            cls._instance = cls(base_path, config)
-        else:
-            if config is not None and cls._instance.config != config:
-                raise RuntimeError("Singleton already initialized with a different config!")
-        return cls._instance
-
-
-
     def __init__(self, base_path: str, config: Optional["BinanceConfig"] = None):
         if hasattr(self, "_initialized") and self._initialized:
             raise RuntimeError("BinanceAggregator singleton already initialized")
         
-        # Yeni tier-based sistem
-        #self._endpoint_registry = self._build_endpoint_registry()
-
-
-        # ------------------------------------------------------------
         # 📦 Core initialization (mevcut yapı)
-        # ------------------------------------------------------------
         self.map_loader = MapLoader(base_path)
         self.map_loader.load_all()
 
@@ -155,19 +135,58 @@ class BinanceAggregator:
         self._stop_event = asyncio.Event()
 
         # ------------------------------------------------------------
-        # 🧩 🔐  Global API key + config (bot) erişimi
+        # 🧩 🔐 Global API key + config (bot) erişimi - DÜZELTİLMİŞ
         # ------------------------------------------------------------
-        from config import get_config_sync
-
-        cfg = get_config_sync()
-        self.global_api_key = getattr(cfg, "BINANCE_API_KEY", None)
-        self.global_api_secret = getattr(cfg, "BINANCE_API_SECRET", None)
+        # ❌ ESKİ: from config import get_config_sync - İPTAL
+        # ✅ YENİ: Doğrudan environment variables
+        self.global_api_key = os.getenv("BINANCE_API_KEY")
+        self.global_api_secret = os.getenv("BINANCE_API_SECRET")
         self.api_manager = self.key_manager  # alias
 
         # Singleton kontrolü
         self._initialized = True
         logger.info("✅ BinanceAggregator initialized successfully")    
-    
+
+    # ✅ YENİ EKLENECEK METOD - __init__'den SONRA
+    async def initialize_managers(self):
+        """Manager'ları async olarak initialize et"""
+        try:
+            # ✅ Database initialization - DOĞRU YÖNTEM
+            await self.key_manager.ensure_db_initialized()
+            
+            # ✅ Global credentials validation (opsiyonel)
+            if self.global_api_key and self.global_api_secret:
+                is_valid = await self.key_manager.validate_global_credentials()
+                if not is_valid:
+                    logger.warning("⚠️ Global API credentials validation failed")
+            
+            logger.info("✅ All managers initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Manager initialization failed: {e}")
+            raise
+
+    # ✅ Singleton pattern düzeltmesi - MEVCUT get_instance YERİNE
+    @classmethod
+    async def get_instance(cls, base_path: str = None, config: Optional["BinanceConfig"] = None) -> "BinanceAggregator":
+        """Async singleton getter - DÜZELTİLMİŞ"""
+        if cls._instance is None:
+            if base_path is None:
+                base_path = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+            cls._instance = cls(base_path, config)
+            
+            # ✅ CRITICAL: Async initialization çağır
+            await cls._instance.initialize_managers()
+            
+        else:
+            if config is not None and cls._instance.config != config:
+                logger.warning("Singleton already initialized with different config - using existing instance")
+                
+        return cls._instance
+        
+
+
+
 
     # =======================================================
     # 👇 Kullanıcıya göre API key belirleme
