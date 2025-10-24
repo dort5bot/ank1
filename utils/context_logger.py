@@ -150,6 +150,8 @@ class ContextAwareLogger:
         cls.add_context('log_prefix', f"[Req:{request_id[:8]}]")
 
 
+
+
 # Convenience function for quick setup
 def setup_context_logging():
     """One-time setup for context-aware logging"""
