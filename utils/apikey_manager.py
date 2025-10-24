@@ -80,6 +80,113 @@ class BaseManager:
         self._db_init_retries = getattr(config, 'DB_INIT_RETRY_ATTEMPTS', 3)
         self._db_timeout = getattr(config, 'DB_CONNECTION_TIMEOUT', 30)
 
+    #tablo başlıkları
+      
+    async def init_db(self) -> bool:
+        """Initialize database with all required tables - DÜZELTİLMİŞ"""
+        await self._ensure_db_exists()
+        
+        db = await self.get_db_connection()
+        try:
+            # ✅ ÖNCE users tablosu (diğerleri buna bağlı)
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    language_code TEXT DEFAULT 'en',
+                    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # ✅ SONRA apikeys (users'a foreign key OPSİYONEL)
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS apikeys (
+                    user_id INTEGER NOT NULL,
+                    exchange TEXT NOT NULL DEFAULT 'binance',
+                    api_key_encrypted TEXT NOT NULL,
+                    api_secret_encrypted TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, exchange)
+                    -- FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE -- OPSİYONEL
+                )
+            ''')
+            
+            # ✅ Alarms tablosu
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS alarms (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    symbol TEXT NOT NULL,
+                    price REAL NOT NULL CHECK(price > 0),
+                    condition TEXT NOT NULL CHECK(condition IN ('above', 'below')),
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    triggered_at TIMESTAMP NULL,
+                    notes TEXT
+                    -- FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE -- OPSİYONEL
+                )
+            ''')
+            
+            # ✅ Trade Settings
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS trade_settings (
+                    user_id INTEGER NOT NULL,
+                    setting_key TEXT NOT NULL CHECK(setting_key IN ('risk_level', 'notifications', 'auto_trade')),
+                    setting_value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, setting_key)
+                    CHECK(setting_key IN ('risk_level', 'notifications', 'auto_trade', 'language', 'timezone'))
+                )
+            ''')
+            
+            # ✅ Audit Log
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    ip_address TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # ✅ PERFORMANS INDEX'LERİ - BURAYA EKLE
+            await self._create_indexes(db)
+            
+            await db.commit()
+            logger.info("✅ All database tables and indexes initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}")
+            await db.rollback()
+            return False
+
+    async def _create_indexes(self, db) -> None:
+        """Create performance indexes"""
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_alarms_user_active ON alarms(user_id, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_alarms_symbol ON alarms(symbol)",
+            "CREATE INDEX IF NOT EXISTS idx_apikeys_user ON apikeys(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_log(user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_trade_settings_user ON trade_settings(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_alarms_created_at ON alarms(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_apikeys_updated ON apikeys(updated_at)"
+        ]
+        
+        for index_sql in indexes:
+            try:
+                await db.execute(index_sql)
+            except Exception as e:
+                logger.warning(f"⚠️ Index creation failed for {index_sql}: {e}")
+
+    async def ensure_db_initialized(self) -> bool:
+        """Ensure database is initialized"""
+        return await self.initialize_database()         
 
     @classmethod
     async def initialize_database(cls) -> bool:
@@ -246,6 +353,14 @@ class APIKeyManager(BaseManager):
 
     def __init__(self):
         super().__init__()
+    
+ 
+    """
+    main içine taşındı
+    # apikey_manager.py'ye ekle (APIKeyManager içine):
+    async def register_user_complete(self, user_id: int, user_data: dict) -> bool:
+    """        
+
 
     @classmethod
     def get_instance(cls) -> "APIKeyManager":
@@ -760,5 +875,27 @@ api manager şunu yapıyor mu
 (BINANCE_API_KEY=m***b  ,BINANCE_API_SE=e***r)
 
 * kişisel api eklenirse analiz işlemleri + kişisel cüzdan işlemleri + trade işlemleri yüklenen bilgiye gmre yapılır
+
+
+📊 TABLO SÜTUN ANALİZİ
+Alarms Tablosu: 8 sütun - tam tanımlı
+Trade Settings: 4 sütun - constraint'lerle
+Users Tablosu: 6 sütun - kapsamlı
+Audit Log: 5 sütun - detaylı logging
+
+Alarms Tablosu - 8 sütun:
+1. id (PK) - Alarm ID
+2. user_id - Kullanıcı ID
+3. symbol - Sembol (BTCUSDT)
+4. price - Alarm fiyatı
+5. condition - Koşul (above/below)
+6. is_active - Aktif/pasif
+7. created_at - Oluşturulma
+8. triggered_at - Tetiklenme
+Trade Settings Tablosu - 4 sütun:
+1. user_id - Kullanıcı ID
+2. setting_key - Ayar anahtarı
+3. setting_value - Ayar değeri
+4. updated_at - Güncelleme
 
 """
