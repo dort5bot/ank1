@@ -1,15 +1,15 @@
-# v234
-# Dockerfile
-# pip install --upgrade pip setuptools wheel satırında --no-cache-dir ekle → daha az katman şişmesi olur
-# builder aşamasında gcc/g++ gibi paketleri kuruyorsun ama runtime’da aslında gerek kalmıyor. Yani image küçültmek için sadece build aşamasında bırakıldı 
-
-
+# =========================
+# Dockerfile v24
+# =========================
+# numpy sürümü >=1.23.2,<2.0 olarak sabitlendi → pandas ve PyWavelets ile uyumlu.
+# -------------------------
 # Build aşaması
+# -------------------------
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Build bağımlılıklarını kur python:3.11-slim 'e göre
+# Build bağımlılıklarını kur
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gfortran \
@@ -23,32 +23,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-
-
-# Pip'i güncelle ve setuptools/wheel ekle
+# Pip, setuptools, wheel güncelle
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# requirements.txt'yi kopyala
+# requirements.txt kopyala
 COPY requirements.txt .
 
-# Önce numpy’yi doğru sürümle yükle
-RUN python -m pip install --no-cache-dir "numpy>=1.23.2,<2.0"
+# Önce uyumlu numpy sürümünü yükle
+RUN pip install --no-cache-dir "numpy>=1.23.2,<2.0"
 
-# Wheel'ları oluştur
+# Kalan paketleri wheel olarak derle
 RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
 
 # requirements.txt'yi de wheels klasörüne kopyala
 RUN cp requirements.txt /app/wheels/
 
-
-
+# -------------------------
 # Runtime aşaması
+# -------------------------
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Sadece gerekli runtime bağımlılıkları
-RUN apt-get update && apt-get install -y \
+# Sadece runtime için gerekli paketler
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -65,14 +63,14 @@ ENV PYTHONUNBUFFERED=1 \
 # Wheel'ları ve requirements.txt'yi kopyala
 COPY --from=builder /app/wheels /wheels
 
-# Wheel'lardan paketleri kur
+# Wheel'lardan paketleri yükle
 RUN pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
     && rm -rf /wheels
 
 # Uygulama kodunu kopyala
 COPY --chown=appuser:appgroup . .
 
-# Health check ve port ayarları
+# Healthcheck ve port
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
@@ -80,5 +78,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Çalışma kullanıcısını ayarla
 USER appuser
 
-# Çalıştırma komutu
+# Başlatma komutu
 CMD ["python", "main.py"]
