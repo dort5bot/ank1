@@ -9,22 +9,20 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Build bağımlılıklarını kur
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
+# Build bağımlılıklarını kur python:3.11-slim 'e göre
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     gfortran \
-    rustc \
-    cargo \
     python3-dev \
-    libc-dev \
     libffi-dev \
     libssl-dev \
     libopenblas-dev \
     liblapack-dev \
-    libatlas-base-dev \
+    rustc \
+    cargo \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
 
 
 # Pip'i güncelle
