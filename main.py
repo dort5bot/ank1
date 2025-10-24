@@ -1009,19 +1009,22 @@ async def execute_critical_db_operation(operation_func, *args, **kwargs):
 
 
 # DATABASE TRANSACTION ROLLBACK  dedicated service'te:
-async def register_user_complete(user_id: int, user_data: dict) -> bool:
-    """Tam kullanıcı kaydı için atomic transaction"""
-    api_manager = APIKeyManager.get_instance()
+# apikey_manager.py ile aynı
+async def register_user_complete(self, user_id: int, user_data: dict) -> bool:
+    """Tam kullanıcı kaydı için atomic transaction - GÜNCELLENMİŞ"""
+    db = await self.get_db_connection()
     
-    async with aiosqlite.connect(api_manager.db_path) as db:
-        try:
+    try:
+        async with db.cursor() as cursor:
             # 1. Kullanıcıyı kaydet
-            await db.execute(
-                "INSERT INTO users (user_id, username, registered_at) VALUES (?, ?, datetime('now'))",
-                (user_id, user_data.get('username'))
+            await cursor.execute(
+                """INSERT OR IGNORE INTO users 
+                   (user_id, username, first_name, language_code) 
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, user_data.get('username'), user_data.get('first_name'), user_data.get('language_code', 'en'))
             )
             
-            # 2. Varsayılan trade settings oluştur
+            # 2. Varsayılan trade settings
             default_settings = [
                 (user_id, 'risk_level', 'medium'),
                 (user_id, 'notifications', 'true'),
@@ -1029,25 +1032,26 @@ async def register_user_complete(user_id: int, user_data: dict) -> bool:
             ]
             
             for setting in default_settings:
-                await db.execute(
-                    "INSERT INTO trade_settings (user_id, setting_key, setting_value) VALUES (?, ?, ?)",
+                await cursor.execute(
+                    "INSERT OR REPLACE INTO trade_settings (user_id, setting_key, setting_value) VALUES (?, ?, ?)",
                     setting
                 )
             
             # 3. Audit log
-            await db.execute(
-                "INSERT INTO audit_log (user_id, action) VALUES (?, ?)",
-                (user_id, 'USER_REGISTERED')
+            await cursor.execute(
+                "INSERT INTO audit_log (user_id, action, details) VALUES (?, ?, ?)",
+                (user_id, 'USER_REGISTERED', json.dumps(user_data))
             )
             
             await db.commit()
+            logger.info(f"✅ User {user_id} registered successfully")
             return True
             
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"❌ User registration failed for {user_id}: {e}")
-            return False
-
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ User registration failed for {user_id}: {e}")
+        return False
+   
 # ---------------------------------------------------------------------
 # MAIN EXECUTION
 # ---------------------------------------------------------------------
