@@ -30,7 +30,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Bağımlılıkları kopyala ve wheel olarak derle
 COPY requirements.txt .
+RUN python -m pip install --upgrade pip
 RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
+
+
 
 # requirements.txt'yi de wheels klasörüne kopyala
 RUN cp requirements.txt /app/wheels/
