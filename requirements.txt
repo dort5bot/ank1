@@ -18,7 +18,7 @@ httpx>=0.24.0,<0.25
 nest-asyncio==1.5.7
 
 # --- numerics / data science
-numpy==1.26.4
+numpy
 pandas==2.2.2
 scipy>=1.10.0
 scikit-learn>=1.4.0
@@ -45,4 +45,5 @@ orjson>=3.9.10
 # --- crypto / network
 cryptography>=41.0
 websockets==13.0
+
 
