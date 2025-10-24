@@ -1,4 +1,4 @@
-# v23
+# v234
 # Dockerfile
 # pip install --upgrade pip setuptools wheel satırında --no-cache-dir ekle → daha az katman şişmesi olur
 # builder aşamasında gcc/g++ gibi paketleri kuruyorsun ama runtime’da aslında gerek kalmıyor. Yani image küçültmek için sadece build aşamasında bırakıldı 
@@ -25,18 +25,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 
-# Pip'i güncelle
+# Pip'i güncelle ve setuptools/wheel ekle
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Bağımlılıkları kopyala ve wheel olarak derle
+# requirements.txt'yi kopyala
 COPY requirements.txt .
-RUN python -m pip install --upgrade pip
+
+# Önce numpy’yi doğru sürümle yükle
+RUN python -m pip install --no-cache-dir "numpy>=1.23.2,<2.0"
+
+# Wheel'ları oluştur
 RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
-
-
 
 # requirements.txt'yi de wheels klasörüne kopyala
 RUN cp requirements.txt /app/wheels/
+
 
 
 # Runtime aşaması
