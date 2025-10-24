@@ -1,4 +1,4 @@
-# v2
+# v23
 # Dockerfile
 # pip install --upgrade pip setuptools wheel satırında --no-cache-dir ekle → daha az katman şişmesi olur
 # builder aşamasında gcc/g++ gibi paketleri kuruyorsun ama runtime’da aslında gerek kalmıyor. Yani image küçültmek için sadece build aşamasında bırakıldı 
@@ -13,11 +13,19 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    gfortran \
+    rustc \
+    cargo \
     python3-dev \
     libc-dev \
     libffi-dev \
+    libssl-dev \
+    libopenblas-dev \
+    liblapack-dev \
+    libatlas-base-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Pip'i güncelle
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
