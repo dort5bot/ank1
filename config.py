@@ -37,7 +37,6 @@ class Environment(Enum):
     DEVELOPMENT = "development"
 
 
-
 # Config içine ekleyebilirsiniz (opsiyonel) polling/ webhook
 @property
 def suggested_bot_mode(self) -> str:
@@ -342,6 +341,23 @@ class OnChainConfig:
 class EncryptionConfig:
     """Encryption configuration with robust fallback handling."""
     
+    @property
+    def ENCRYPTION_ALGORITHM(self) -> str:
+        """Şifreleme algoritması"""
+        return os.getenv('ENCRYPTION_ALGORITHM', 'fernet')
+    
+    @property
+    def KEY_ROTATION_INTERVAL(self) -> int:
+        """Anahtar rotasyon aralığı (gün)"""
+        return int(os.getenv('KEY_ROTATION_INTERVAL', '90'))
+    
+    @property
+    def ENFORCE_STRONG_KEYS(self) -> bool:
+        """Güçlü anahtar zorunluluğu"""
+        return os.getenv('ENFORCE_STRONG_KEYS', 'true').lower() == 'true'
+    
+    
+    
     def _get_master_key(self) -> str:
         """Get master key with comprehensive fallback options"""
         master_key = os.getenv("MASTER_KEY")
@@ -426,6 +442,57 @@ class EncryptionConfig:
             logger.info(f"✅ Created database directory: {db_dir}")
         return db_url
 
+# scan coin/ sayı vb merkezi yönetim
+@dataclass
+class ScanConfig:
+    """Market scan configuration."""
+    # Default settings
+    SCAN_DEFAULT_COUNT: int = field(default_factory=lambda: int(os.getenv("SCAN_DEFAULT_COUNT", "20")))
+    SCAN_MAX_COUNT: int = field(default_factory=lambda: int(os.getenv("SCAN_MAX_COUNT", "50")))
+    
+    # Symbol lists
+    SCAN_SYMBOLS: List[str] = field(default_factory=lambda: [
+        symbol.strip() for symbol in os.getenv(
+            "SCAN_SYMBOLS", 
+            "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,AVAXUSDT,MATICUSDT,OPUSDT,DOTUSDT,LINKUSDT,TRXUSDT,ATOMUSDT,CAKEUSDT,LTCUSDT,ARPAUSDT,TURBOUSDT,SUIUSDT,PEPEUSDT,SHIBUSDT"
+
+        ).split(",") if symbol.strip()
+    ])
+    
+    # Categorized symbols for different scan types
+    MAJOR_SYMBOLS: List[str] = field(default_factory=lambda: [
+        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT"
+    ])
+    
+    MIDCAP_SYMBOLS: List[str] = field(default_factory=lambda: [
+        "XRPUSDT", "DOGEUSDT", "BNBUSDT", "TRXUSDT", "OPUSDT"
+    ])
+    
+    # Quick access properties
+    @property
+    def ALL_SYMBOLS(self) -> List[str]:
+        """Get all available symbols."""
+        return self.SCAN_SYMBOLS
+    
+    @property
+    def DEFAULT_SYMBOLS(self) -> List[str]:
+        """Get default symbols for general scans."""
+        return self.SCAN_SYMBOLS[:self.SCAN_DEFAULT_COUNT]
+    
+    def get_symbols_by_count(self, count: int) -> List[str]:
+        """Get symbols limited by count."""
+        count = min(count, self.SCAN_MAX_COUNT)
+        return self.SCAN_SYMBOLS[:count]
+    
+    def get_symbols_by_type(self, symbol_type: str = "all") -> List[str]:
+        """Get symbols by category."""
+        type_map = {
+            "all": self.SCAN_SYMBOLS,
+            "major": self.MAJOR_SYMBOLS,
+            "midcap": self.MIDCAP_SYMBOLS,
+            "default": self.DEFAULT_SYMBOLS
+        }
+        return type_map.get(symbol_type, self.DEFAULT_SYMBOLS)
 
 
 class ApikeyManagerSettings(BaseSettings):
@@ -441,6 +508,19 @@ class ApikeyManagerSettings(BaseSettings):
     TELEGRAM_TOKEN: str
     MASTER_KEY: str
     DATABASE_URL: str = "data/apikeys.db"
+    
+    secure_db_permissions: bool = False
+    db_init_retry_attempts: int = 3
+    db_connection_timeout: int = 30
+    db_cache_size: int = 1000
+    db_auto_backup: bool = False
+    db_backup_interval_hours: int = 24
+    db_max_backup_files: int = 10
+    db_vacuum_on_startup: bool = False
+    encryption_algorithm: str = "fernet"
+    key_rotation_interval: int = 90
+    enforce_strong_keys: bool = True
+    
     USE_WEBHOOK: bool = False
     WEBHOOK_SECRET: str
     WEBHOOK_PATH: str = "/webhook"
@@ -451,9 +531,12 @@ class ApikeyManagerSettings(BaseSettings):
     RESET_TIMEOUT: int = 30
     HALF_OPEN_TIMEOUT: int = 15
     SCAN_SYMBOLS: str
+    SCAN_DEFAULT_COUNT: int = 20
+    SCAN_MAX_COUNT: int = 50
     GLASSNODE_API_KEY: str
     ONCHAIN_LOG_LEVEL: str = "INFO"
     ONCHAIN_CACHE_ENABLED: bool = False
+    
     
 
     class Config:
@@ -468,6 +551,32 @@ def get_apikey_config() -> ApikeyManagerSettings:
         os.makedirs(db_dir, exist_ok=True)
     return config
 
+
+
+
+@dataclass
+class DatabaseConfig:
+    """Database-specific configuration."""
+    
+    @property
+    def AUTO_BACKUP(self) -> bool:
+        """Otomatik database yedekleme"""
+        return os.getenv('DB_AUTO_BACKUP', 'true').lower() == 'true'
+    
+    @property
+    def BACKUP_INTERVAL_HOURS(self) -> int:
+        """Yedekleme aralığı (saat)"""
+        return int(os.getenv('DB_BACKUP_INTERVAL_HOURS', '24'))
+    
+    @property
+    def MAX_BACKUP_FILES(self) -> int:
+        """Maksimum yedek dosya sayısı"""
+        return int(os.getenv('DB_MAX_BACKUP_FILES', '10'))
+    
+    @property
+    def VACUUM_ON_STARTUP(self) -> bool:
+        """Başlangıçta database optimize et"""
+        return os.getenv('DB_VACUUM_ON_STARTUP', 'false').lower() == 'true'
 
 
 # config.py'ye main için olmalı 
@@ -528,12 +637,7 @@ class BotConfig:
     # ========================
     # 📊 TRADING SETTINGS
     # ========================
-    SCAN_SYMBOLS: List[str] = field(default_factory=lambda: [
-        symbol.strip() for symbol in os.getenv(
-            "SCAN_SYMBOLS", 
-            "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,TRXUSDT,CAKEUSDT,SUIUSDT,PEPEUSDT,ARPAUSDT,TURBOUSDT"
-        ).split(",") if symbol.strip()
-    ])
+    SCAN: ScanConfig = field(default_factory=ScanConfig)
     
     ENABLE_TRADING: bool = field(default_factory=lambda: os.getenv("ENABLE_TRADING", "false").lower() == "true")
     TRADING_STRATEGY: str = field(default_factory=lambda: os.getenv("TRADING_STRATEGY", "conservative"))
@@ -548,6 +652,32 @@ class BotConfig:
     # other settings
     DEBUG: bool = field(default_factory=lambda: os.getenv("DEBUG", "false").lower() == "true")
     
+
+
+    # ========================
+    # 🗄️ DATABASE SECURITY SETTINGS
+    # ========================
+    @property
+    def SECURE_DB_PERMISSIONS(self) -> bool:
+        """Güvenli database izinleri kullanılsın mı?"""
+        return os.getenv('SECURE_DB_PERMISSIONS', 'true').lower() == 'true'
+    
+    @property  
+    def DB_INIT_RETRY_ATTEMPTS(self) -> int:
+        """DB init retry sayısı"""
+        return int(os.getenv('DB_INIT_RETRY_ATTEMPTS', '3'))
+    
+    @property
+    def DB_CONNECTION_TIMEOUT(self) -> int:
+        """DB connection timeout (saniye)"""
+        return int(os.getenv('DB_CONNECTION_TIMEOUT', '30'))
+    
+    @property
+    def DB_CACHE_SIZE(self) -> int:
+        """DB cache boyutu"""
+        return int(os.getenv('DB_CACHE_SIZE', '1000'))
+        
+    
     # ========================
     # 🏗️ COMPONENT CONFIGS
     # ========================
@@ -555,7 +685,8 @@ class BotConfig:
     AIOGRAM: AioGramConfig = field(default_factory=AioGramConfig)
     ANALYSIS: AnalysisConfig = field(default_factory=AnalysisConfig)
     ONCHAIN: OnChainConfig = field(default_factory=OnChainConfig)
-
+    DATABASE: DatabaseConfig = field(default_factory=DatabaseConfig)
+    
     @property
     def WEBHOOK_PATH(self) -> str:
         """

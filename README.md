@@ -1,28 +1,50 @@
-utils/binance_api/binance_a.py
-maps tabanlıdır
+#
+İlişkili dosyaları sorgula
+* sorunu çözmeden ilerleme
+* main+config+flow(gocker+.dosker+flow)
+* * main+config+handlerloader
+  * sorunsuz olmak zorunda
+* main+config+binance
+* handlerloader+binance
+* main+config+analiz
+* handlerloader+analiz
+* ?
+* apikey hangi aşamada eklenmeli
 
----
-.yaml çağrı şekli 	GET
-örnek:
-çağrılacak metot: ticker_24h
+#
+GHCR YAPMADAN İLERLEME
 
-get_ticker_24h:
-    client: SpotClient
-    method: get_ticker_24h
-    path: /api/v3/ticker/24hr
-    http_method: GET
-    signed: false
-    scope: market
-    base: spot
-    weight: 1
-    rate_limit_type: IP
-    multi_user_support: true
-    cache_ttl: 5
-    job_type: io
-    purpose: "Retrieve 24-hour price change statistics for trend strength metrics"
-    tags: [public, ticker, volatility, analysis]
-    enabled: true
-    version: v3
-    return_type: dict
-	
----
+#======= ZORUNLU ENV===========
+# Bot Settings
+TELEGRAM_TOKEN=your_telegram_bot_token_here
+ADMIN_IDS=123456789,987654321
+DEFAULT_LOCALE=en
+
+# Webhook Settings
+USE_WEBHOOK=false
+WEBHOOK_HOST=https://your-domain.render.com
+WEBHOOK_PATH=/webhook
+WEBHOOK_SECRET=your_webhook_secret_here
+WEBAPP_HOST=0.0.0.0
+PORT=3000
+
+# Binance API
+BINANCE_API_KEY=your_binance_api_key
+BINANCE_API_SECRET=your_binance_api_secret
+ENABLE_TRADING=false
+
+# Technical Settings
+DEBUG=true
+LOG_LEVEL=INFO
+REQUEST_TIMEOUT=30
+MAX_REQUESTS_PER_MINUTE=1200
+
+#============
+
+
+
+
+#
+
+
+#

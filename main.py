@@ -7,39 +7,43 @@ USE_WEBHOOK=false python main.py
 # Production (webhook)  
 USE_WEBHOOK=true python main.py
 """
+
+# main.py - İYİLEŞTİRİLMİŞ IMPORT
 import os
 import asyncio
 import logging
 import signal
 import time
 import aiosqlite
-#import resource
-
 from typing import Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 
+# Üçüncü parti kütüphaneler
 import aiohttp
+from datetime import datetime
 from aiohttp import web
 from dotenv import load_dotenv
+
+# Aiogram
 from aiogram import Bot, Dispatcher, Router
-from datetime import datetime
 from aiogram.types import Update, Message, ErrorEvent
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import BaseFilter
 
+# Proje modülleri
 from config import BotConfig, get_telegram_token, get_admins, get_config
 from utils.handler_loader import HandlerLoader
-from utils.binance_api.binance_exceptions import BinanceAPIError, BinanceAuthenticationError
-from utils.binance_api.binance_a import BinanceAggregator
-from utils.apikey_manager import APIKeyManager, AlarmManager, TradeSettingsManager, initialize_managers
+from utils.apikey_manager import APIKeyManager, AlarmManager, BaseManager, TradeSettingsManager
 from utils.context_logger import setup_context_logging, get_context_logger, ContextAwareLogger
 from utils.performance_monitor import PerformanceMonitor
 from utils.security_auditor import security_auditor
+from utils.binance_api.binance_a import BinanceAggregator
+from utils.binance_api.binance_exceptions import BinanceAPIError, BinanceAuthenticationError
+
 
 # ---------------------------------------------------------------------
-# Global instances
+# Global instances - LOGGER
 # ---------------------------------------------------------------------
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
@@ -48,6 +52,9 @@ app_config: Optional[BotConfig] = None
 runner: Optional[web.AppRunner] = None
 shutdown_event = asyncio.Event()
 
+# ✅ LOGGER
+logger: Optional[logging.Logger] = None
+
 # Configure logging
 load_dotenv()
 logging.basicConfig(
@@ -55,91 +62,17 @@ logging.basicConfig(
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S"
 )
-logger = logging.getLogger(__name__)
-setup_context_logging()
-logger = get_context_logger(__name__)
 
-# ---------------------------------------------------------------------
-# ENHANCED DATABASE INITIALIZATION (main-yeni'den geliştirilmiş)
-# ---------------------------------------------------------------------
-async def ensure_database_ready() -> bool:
-    """Veritabanının kesin olarak hazır olduğundan emin ol"""
-    max_retries = 3
-    retry_delay = 2
-    
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"🔧 Database initialization attempt {attempt + 1}/{max_retries}")
-            
-            # ✅ 1. Managers'ı başlat
-            logger.info("🔄 Initializing managers...")
-            managers_ok = await initialize_managers()
-            if not managers_ok:
-                logger.warning(f"⚠️ Managers initialization failed on attempt {attempt + 1}")
-                continue
-            
-            # ✅ 2. API Manager ile tabloları oluştur
-            logger.info("🔄 Creating database tables...")
-            api_manager = APIKeyManager.get_instance()
-            
-            # Tabloları oluştur
-            init_result = await api_manager.init_db()
-            if not init_result:
-                logger.warning(f"⚠️ init_db() returned False on attempt {attempt + 1}")
-                continue
-            
-            # ✅ 3. Tabloların oluştuğunu MANUEL DOĞRULA
-            logger.info("🔄 Manually verifying database structure...")
-            await asyncio.sleep(0.5)  # DB'nin commit'i tamamlaması için
-            
-            try:
-                async with aiosqlite.connect(api_manager.db_path) as db:
-                    cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                    tables = await cursor.fetchall()
-                    table_names = [table[0] for table in tables]
-                    logger.info(f"📊 Database tables: {table_names}")
-                    
-                    # Kritik tabloları kontrol et
-                    required_tables = ['apikeys', 'alarms', 'trade_settings']
-                    missing_tables = [table for table in required_tables if table not in table_names]
-                    
-                    if missing_tables:
-                        logger.error(f"❌ Missing tables: {missing_tables}")
-                        continue
-                    else:
-                        logger.info("✅ All required tables exist")
-                        
-                    # Tablo yapılarını da kontrol et
-                    for table in required_tables:
-                        cursor = await db.execute(f"PRAGMA table_info({table})")
-                        columns = await cursor.fetchall()
-                        column_names = [col[1] for col in columns]
-                        logger.info(f"📋 {table} columns: {column_names}")
-                        
-            except Exception as verify_error:
-                logger.error(f"❌ Table verification failed: {verify_error}")
-                continue
-            
-            # ✅ 4. Database status kontrolü
-            try:
-                db_status = await api_manager.get_database_status()
-                logger.info(f"📊 Database status: {db_status}")
-            except Exception as status_error:
-                logger.warning(f"⚠️ Could not get database status: {status_error}")
-            
-            logger.info("✅ Database fully initialized and verified")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Database init attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                logger.info(f"⏳ Retrying in {retry_delay} seconds...")
-                await asyncio.sleep(retry_delay)
-            else:
-                logger.error(f"💥 All database initialization attempts failed")
-                return False
-    
-    return False
+def setup_logger():
+    """Logger'ı global olarak setup et"""
+    global logger
+    logger = logging.getLogger(__name__)
+    setup_context_logging()
+    logger = get_context_logger(__name__)
+    return logger
+
+# ✅ Logger initialize
+logger = setup_logger()
 
 # ---------------------------------------------------------------------
 # Bot Factory & Data Structure (main-eski'den)
@@ -338,8 +271,9 @@ class DIContainer:
         return cls._instances.copy()
 
 # ---------------------------------------------------------------------
-# Binance API Initialization
+# .db initialize_binance_api
 # ---------------------------------------------------------------------
+
 async def initialize_binance_api() -> Optional[Any]:
     """Initialize Binance API with proper factory pattern."""
     global app_config
@@ -353,16 +287,9 @@ async def initialize_binance_api() -> Optional[Any]:
         aggregator = BinanceAggregator.get_instance()
         logger.info("✅ Binance API initialized successfully")
         return aggregator
-        
-    except (ConnectionError, TimeoutError) as e:
-        logger.error(f"🌐 Network error during Binance API init: {e}")
-        raise ConnectionError(f"Binance API connection failed: {e}") from e
-    except BinanceAuthenticationError as e:
-        logger.error(f"🔐 Authentication error during Binance API init: {e}")
-        raise
     except Exception as e:
-        logger.error(f"❌ Unexpected error during Binance API init: {e}")
-        raise
+        logger.error(f"❌ Binance API initialization failed: {e}")
+        return None
 
 # ---------------------------------------------------------------------
 # Handler Loading - ENHANCED HANDLER LOADING SYSTEM
@@ -447,11 +374,30 @@ async def reset_webhook(bot_instance: Bot):
         return False
 
 
+
 async def on_startup(bot: Bot) -> None:
     """Minimal startup - webhook bash script tarafından yönetiliyor"""
-    global app_config
+    global app_config, logger
     
     try:
+        # ✅ Logger kontrolü
+        if logger is None:
+            setup_logger()
+            
+        # ✅ BOT ADI ile başlatma mesajı
+        bot_info = await bot.get_me()
+        bot_name = bot_info.username
+        bot_first_name = bot_info.first_name
+        
+        # .env'den TELEGRAM_NAME al veya bot info'dan kullan
+        env_bot_name = os.environ.get('TELEGRAM_NAME', '')
+        display_name = env_bot_name if env_bot_name else f"{bot_first_name} (@{bot_name})"
+        
+        logger.info(f"🤖 BOT BAŞLATILDI: {display_name}")
+        logger.info(f"   ├─ Username: @{bot_name}")
+        logger.info(f"   ├─ First Name: {bot_first_name}")
+        logger.info(f"   └─ ID: {bot_info.id}")
+        
         # ✅ SADECE handler yükleme ve basit kontrol
         logger.info("🔄 Starting bot with external webhook management...")
         
@@ -478,7 +424,7 @@ async def on_startup(bot: Bot) -> None:
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
         raise
-
+        
 
 async def on_shutdown(bot: Bot) -> None:
     """Execute on application shutdown."""
@@ -526,6 +472,31 @@ async def health_check(request: web.Request) -> web.Response:
             "timestamp": datetime.now().isoformat(),
             "critical": True
         }, status=500)
+
+
+
+async def initialize_managers():
+    """TEK ve AÇIK initialization, gerekirse utils/__init__.py içine taşınıp merkezi olabilir"""
+    try:
+        logger.info("🔄 Initializing managers...")
+        
+        # Database initialization
+        success = await BaseManager.initialize_database()
+        if success:
+            # Manager instance'larını oluştur
+            APIKeyManager.get_instance()
+            AlarmManager.get_instance() 
+            TradeSettingsManager.get_instance()
+            
+            logger.info("✅ All managers initialized successfully")
+        else:
+            logger.error("❌ Database initialization failed")
+            
+        return success
+        
+    except Exception as e:
+        logger.error(f"❌ Manager initialization failed: {e}")
+        return False
 
 async def _perform_health_check(handler_info: dict = None) -> web.Response:
     """Internal health check implementation without timeout."""
@@ -596,6 +567,25 @@ async def _perform_health_check(handler_info: dict = None) -> web.Response:
     })
 
 
+async def detailed_health_check(request: web.Request) -> web.Response:
+    """Detaylı sistem sağlık kontrolü"""
+    health_info = {
+        "database": {
+            "initialized": BaseManager._db_initialized,
+            "connections": len(BaseManager._db_connections),
+            "cache_size": len(APIKeyManager._cache)
+        },
+        "encryption": {
+            "initialized": BaseManager._fernet is not None
+        },
+        "managers": {
+            "api_key_manager": APIKeyManager._instance is not None,
+            "alarm_manager": AlarmManager._instance is not None,
+            "trade_manager": TradeSettingsManager._instance is not None
+        }
+    }
+    
+    return web.json_response(health_info)
 
 async def readiness_check(request: web.Request) -> web.Response:
     """Readiness check for Kubernetes and load balancers."""
@@ -682,6 +672,11 @@ async def lifespan(config: BotConfig):
     try:
         app_config = config
         
+        # ✅ # ✅ ✅ ✅ CRITICAL: MANAGER'LARI EN BAŞTA BAŞLAT
+        if not await initialize_managers():
+            raise RuntimeError("Manager initialization failed")
+        
+        
         # ✅ 1-PERFORMANCE MONITORING
         ContextAwareLogger.add_context('lifecycle_phase', 'bot_initialization')
         
@@ -735,6 +730,18 @@ async def cleanup_resources():
     
     cleanup_tasks = []
     
+    # ✅ API Manager kaynaklarını temizle
+    try:
+        api_manager = APIKeyManager.get_instance()
+        if hasattr(api_manager, 'cleanup'):
+            cleanup_tasks.append(api_manager.cleanup()) 
+        cleanup_tasks.append(BaseManager.cleanup_all())
+        logger.info("✅ API managers cleanup scheduled")
+    except Exception as e:
+        logger.warning(f"⚠️ API manager cleanup failed: {e}")
+    
+    
+    
     if runner:
         cleanup_tasks.append(runner.cleanup())
         logger.info("✅ App runner cleanup scheduled")
@@ -761,6 +768,8 @@ async def cleanup_resources():
     
     logger.info("✅ All resources cleaned up")
 
+
+#sil/ kullan
 async def start_periodic_cleanup():
     """Periodic cleanup tasks for performance optimization"""
     try:
@@ -831,6 +840,8 @@ async def app_entry():
         # ✅ Config'ten modu oku
         bot_mode = "webhook" if app_config.USE_WEBHOOK else "polling"
         logger.info(f"🚀 Starting bot in {bot_mode.upper()} mode (from config)...")
+        logger.info("🤖 Bot polling modunda başlatılıyor-elma...")
+        #await dispatcher.start_polling(bot)
         
         # ✅ Lifespan ile bileşenleri başlat
         async with lifespan(app_config):
@@ -869,20 +880,22 @@ async def app_entry():
 
      
 
+
 async def create_app() -> web.Application:
     """Ana app creator - lifespan BURADA"""
     global bot, dispatcher, app_config
     
-    # ✅ LIFESPAN SADECE BURADA
+    # ✅ LIFESPAN SADECE BURADA - create_app içinde
+    app = web.Application()
+    
+    # Route'ları önce ekle
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
+    app.router.add_get("/ready", readiness_check)
+    
+    # ✅ SONRA lifespan ile initialization
     async with lifespan(app_config):
-        app = web.Application()
-        
-        # Route'lar
-        app.router.add_get("/", health_check)
-        app.router.add_get("/health", health_check)
-        app.router.add_get("/ready", readiness_check)
-        
-        # Webhook
+        # Webhook setup
         if app_config.WEBHOOK_HOST:
             webhook_handler = SimpleRequestHandler(
                 dispatcher=dispatcher,
@@ -897,11 +910,9 @@ async def create_app() -> web.Application:
         
         # Aiogram setup
         setup_application(app, dispatcher, bot=bot)
-        
-        logger.info(f"🚀 Application configured on port {app_config.WEBAPP_PORT}")
-        return app
-
-
+    
+    return app
+    
 # ---------------------------------------------------------------------
 # POLLING MODU İÇİN SHUTDOWN DESTEĞİ
 # ---------------------------------------------------------------------
@@ -1048,35 +1059,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💥 Fatal error: {e}")
         exit(1)
-
-
-
-"""
-        # 5️ handler yükleme
-        logger.info("🔄 Checking handler loading...")
-        
-        # 5-1 Handler'ları yükle
-        loader = HandlerLoader(dispatcher=dispatcher)
-        handler_results = await loader.load_handlers(dispatcher)
-        logger.info(f"📊 HANDLER YÜKLEME SONUÇLARI: {handler_results}")
-        
-        # 5-2 Router bilgilerini logla
-        if dispatcher:
-            logger.info(f"📋 Toplam router: {len(dispatcher.sub_routers)}")
-            for i, router in enumerate(dispatcher.sub_routers):
-                logger.info(f"🔄 Router {i}: {getattr(router, 'name', 'unnamed')} - {len(router.handlers)} handler")
-        
-        # 5-3 Eğer hiç handler yüklenmediyse, manuel ekle
-        if handler_results.get('loaded', 0) == 0:
-            logger.warning("⚠️ No handlers loaded - adding emergency handler")
-            await add_emergency_handlers(dispatcher)
-
-        
-        return True
-        
-    except Exception as e:
-        logger.critical(f"💥 Startup sequence failed: {e}")
-        return False
-
-
-"""
