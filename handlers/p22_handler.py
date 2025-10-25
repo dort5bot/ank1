@@ -161,7 +161,7 @@ class PriceHandler:
         self._aggregator_status = "not_initialized"    
     
     
-  
+ 
     async def initialize(self):
         """Initialize Binance aggregator with proper error handling"""
         if self._initialized:
@@ -170,11 +170,11 @@ class PriceHandler:
         try:
             logger.info("🔄 Initializing BinanceAggregator...")
             
-            # ✅ CRITICAL: Config'i import et
+            # ✅ DÜZELTME: Config'i import et
             from config import get_config_sync
             config = get_config_sync()
             
-            # ✅ DÜZELTME: Base path'i doğru ver (os artık import edildi)
+            # ✅ DÜZELTME: Base path'i doğru ver
             base_path = os.path.abspath(os.path.join(
                 os.path.dirname(__file__), 
                 "..", 
@@ -182,8 +182,8 @@ class PriceHandler:
                 "binance_api"
             ))
             
-            # ✅ DÜZELTME: Config ile birlikte initialize et
-            self.binance = BinanceAggregator.get_instance(base_path=base_path)
+            # ✅ CRITICAL DÜZELTME: await ekle
+            self.binance = await BinanceAggregator.get_instance(base_path=base_path)
             
             # ✅ Test connection
             if hasattr(self.binance, 'test_connection'):
@@ -205,7 +205,7 @@ class PriceHandler:
             self._aggregator_status = f"error: {e}"
             logger.error(f"❌ PriceHandler initialization failed: {e}")
             return False
-
+            
         
     
     def normalize_symbol(self, symbol: str) -> str:
@@ -215,8 +215,6 @@ class PriceHandler:
         
     # p_handler.py - veri sorgusu
 
-
-    # p22_handler.py - get_all_tickers metodunu düzeltin
     async def get_all_tickers(self, user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
         """Get limited tickers - CORRECTED VERSION"""
         
@@ -225,7 +223,7 @@ class PriceHandler:
             return cached_data
         
         try:
-            # ✅ DÜZELTME: Doğru endpoint ismi kullan
+            # ✅ DÜZELTİLDİ: Doğru parametre sırası
             data = await self.binance.get_data("ticker_24hr_all", user_id=user_id)
             
             if data and isinstance(data, list):
@@ -239,13 +237,15 @@ class PriceHandler:
                 
                 await self._cache.set(user_id, f"all_tickers_{limit}", limited_pairs)
                 return limited_pairs
+            else:
+                logger.warning("❌ Aggregator returned empty or invalid data")
+                return await self._http_fallback(user_id)
                 
         except Exception as e:
-            logger.error(f"❌ Aggregator error: {e}")
+            logger.error(f"❌ Aggregator error in get_all_tickers: {e}")
             return await self._http_fallback(user_id)
             
-
-
+            
      
 
     #----
@@ -492,65 +492,8 @@ async def volume_command(message: Message, bot: Bot):
         await message.answer("❌ Veri alınırken bir hata oluştu.")
 
 
-@router.message(Command("debug_price"))
-async def debug_price_handler(message: Message):
-    """Debug endpoint for price handler status"""
-    user_id = message.from_user.id
-    
-    debug_info = {
-        "handler_initialized": price_handler._initialized,
-        "aggregator_status": getattr(price_handler, '_aggregator_status', 'unknown'),
-        "last_error": getattr(price_handler, '_last_error', 'none'),
-        "binance_instance": price_handler.binance is not None,
-        "cache_size": "N/A"  # Cache boyutu eklenebilir
-    }
-    
-    # Binance aggregator detayları
-    if price_handler.binance:
-        debug_info["aggregator_methods"] = [
-            method for method in dir(price_handler.binance) 
-            if not method.startswith('_') and callable(getattr(price_handler.binance, method))
-        ][:10]  # İlk 10 metod
-    
-    response = "🔧 **Price Handler Debug Info**\n"
-    for key, value in debug_info.items():
-        response += f"{key}: {value}\n"
-    
-    await message.answer(response)
-    
 
-@router.message(Command("debug_aggregator"))
-async def debug_aggregator_detailed(message: Message):
-    """Detailed debug for aggregator"""
-    user_id = message.from_user.id
-    
-    debug_info = {
-        "handler_initialized": price_handler._initialized,
-        "aggregator_initialized": getattr(price_handler.binance, '_initialized', False),
-        "aggregator_class": price_handler.binance.__class__.__name__,
-        "map_loader_loaded": len(getattr(price_handler.binance.map_loader, 'maps', {})) > 0,
-    }
-    
-    # Map loader detayları
-    if hasattr(price_handler.binance, 'map_loader'):
-        maps = price_handler.binance.map_loader.maps
-        debug_info["loaded_maps"] = list(maps.keys())
-        
-        # ticker_24hr_all endpoint kontrolü
-        endpoint = price_handler.binance.map_loader.get_endpoint("ticker_24hr_all")
-        debug_info["ticker_24hr_all_endpoint"] = "FOUND" if endpoint else "NOT_FOUND"
-        if endpoint:
-            debug_info["endpoint_details"] = {
-                "client": endpoint.get('client'),
-                "method": endpoint.get('method'), 
-                "path": endpoint.get('path')
-            }
-    
-    response = "🔧 **Detailed Aggregator Debug**\n"
-    for key, value in debug_info.items():
-        response += f"{key}: {value}\n"
-    
-    await message.answer(response)
+
     
 # p_handler.py - debug_command'a ekle
 @router.message(Command("debug_config"))
@@ -629,7 +572,6 @@ async def test_aggregator(message: Message):
         
 
 
-
 # p_handler.py'ye ekle
 @router.message(Command("test_ping"))
 async def test_ping(message: Message):
@@ -658,123 +600,6 @@ async def test_ping(message: Message):
         await message.answer(f"❌ Ping failed: {e}")
 
 
-# p_handler.py'ye ekle  
-@router.message(Command("debug_credentials"))
-async def debug_credentials(message: Message):
-    """Debug API credentials"""
-    user_id = message.from_user.id
-    
-    try:
-        # Global credentials
-        from config import get_config_sync
-        config = get_config_sync()
-        
-        debug_info = {
-            "global_api_key": f"{config.BINANCE_API_KEY[:10]}..." if config.BINANCE_API_KEY else "MISSING",
-            "global_api_secret": f"{config.BINANCE_API_SECRET[:10]}..." if config.BINANCE_API_SECRET else "MISSING",
-            "user_id": user_id
-        }
-        
-        # Aggregator credentials
-        aggregator = price_handler.binance
-        if aggregator:
-            try:
-                api_key, secret_key = await aggregator.get_user_credentials(user_id)
-                debug_info["aggregator_api_key"] = f"{api_key[:10]}..." if api_key else "MISSING"
-                debug_info["aggregator_api_secret"] = f"{secret_key[:10]}..." if secret_key else "MISSING"
-            except Exception as e:
-                debug_info["aggregator_credentials_error"] = str(e)
-        
-        response = "🔑 **Credentials Debug**\n"
-        for key, value in debug_info.items():
-            response += f"{key}: {value}\n"
-            
-        await message.answer(response)
-        
-    except Exception as e:
-        await message.answer(f"❌ Credentials debug failed: {e}")
-
-    
-# p_handler.py - test_simple komutunu güncelle
-@router.message(Command("test_simple"))
-async def test_simple(message: Message):
-    """Simple test with single symbol - FIXED VERSION"""
-    user_id = message.from_user.id
-    
-    try:
-        logger.info(f"🔄 test_simple called for user {user_id}")
-        
-        # ✅ DÜZELTME: Doğru endpoint ve parametreler
-        data = await price_handler.binance.get_data(
-            "ticker_24h",  # Tek symbol için endpoint
-            user_id=user_id, 
-            symbol="BTCUSDT"
-        )
-        
-        response = f"✅ **Simple Test Results**\n"
-        response += f"Data type: {type(data)}\n"
-        
-        if isinstance(data, dict):
-            response += f"Symbol: {data.get('symbol', 'N/A')}\n"
-            response += f"Price: {data.get('lastPrice', 'N/A')}\n"
-            response += f"Change: {data.get('priceChangePercent', 'N/A')}%\n"
-            response += f"Volume: {data.get('volume', 'N/A')}\n"
-        elif isinstance(data, list):
-            response += f"Received list with {len(data)} items\n"
-            if data and len(data) > 0:
-                first_item = data[0]
-                response += f"First item type: {type(first_item)}\n"
-        else:
-            response += f"Raw data: {str(data)[:200]}\n"
-        
-        await message.answer(response, parse_mode=None)
-        
-    except Exception as e:
-        error_msg = f"❌ Simple test failed: {str(e)[:200]}"
-        logger.error(f"test_simple error: {e}")
-        await message.answer(error_msg, parse_mode=None)
-# p_handler.py - test_http_client komutunu güncelle
-# p_handler.py - test_http_client komutunu basitleştirelim
-@router.message(Command("test_http_client"))
-async def test_http_client(message: Message):
-    """Test HTTP client directly - SIMPLE VERSION"""
-    user_id = message.from_user.id
-    
-    try:
-        from utils.binance_api.binance_request import BinanceHTTPClient
-        from config import get_config_sync
-        
-        config = get_config_sync()
-        
-        # Basit HTTP client oluştur
-        http_client = BinanceHTTPClient(
-            api_key=config.BINANCE_API_KEY,
-            secret_key=config.BINANCE_API_SECRET,
-            user_id=user_id
-        )
-        
-        # Basit bir public endpoint test et
-        result = await http_client.send_request(
-            "GET", "/api/v3/ticker/24hr", signed=False, params={"symbol": "BTCUSDT"}
-        )
-        
-        response = f"✅ **HTTP Client Test**\n"
-        response += f"Data type: {type(result)}\n"
-        
-        if isinstance(result, dict):
-            response += f"Symbol: {result.get('symbol', 'N/A')}\n"
-            response += f"Price: {result.get('lastPrice', 'N/A')}\n"
-            response += f"Change: {result.get('priceChangePercent', 'N/A')}%\n"
-        
-        await message.answer(response, parse_mode=None)
-        
-    except Exception as e:
-        error_msg = f"❌ HTTP Client test failed: {str(e)[:200]}"
-        await message.answer(error_msg, parse_mode=None)
-
-        
-
-# p_handler.py - test_ticker komutunu güncelle
 # p_handler.py - test_ticker komutunu debug version yapalım
 @router.message(Command("test_ticker"))
 async def test_ticker_endpoint(message: Message):
@@ -822,48 +647,7 @@ async def test_ticker_endpoint(message: Message):
         logger.error(f"test_ticker DEBUG error: {e}", exc_info=True)
         await message.answer(error_msg, parse_mode=None)
         
-
-@router.message(Command("test_endpoint"))
-async def test_endpoint(message: Message):
-    """Test specific endpoint"""
-    user_id = message.from_user.id
-    args = message.text.split()[1:]
     
-    if not args:
-        await message.answer("❌ Usage: /test_endpoint <endpoint_name>")
-        return
-    
-    endpoint_name = args[0]
-    
-    try:
-        # Endpoint'in varlığını kontrol et
-        endpoint_config = price_handler.binance.map_loader.get_endpoint(endpoint_name)
-        if not endpoint_config:
-            await message.answer(f"❌ Endpoint '{endpoint_name}' not found")
-            return
-        
-        # Endpoint'i test et
-        params = {}
-        if endpoint_name == "ticker_24h":
-            params = {"symbol": "BTCUSDT"}
-        
-        data = await price_handler.binance.get_data(endpoint_name, user_id=user_id, **params)
-        
-        response = f"✅ **Endpoint Test: {endpoint_name}**\n"
-        response += f"Type: {type(data)}\n"
-        response += f"Config: {endpoint_config.get('method', 'N/A')}\n"
-        
-        if isinstance(data, (dict, list)):
-            response += f"Data sample: {str(data)[:300]}...\n"
-        else:
-            response += f"Raw: {str(data)[:200]}\n"
-        
-        await message.answer(response, parse_mode=None)
-        
-    except Exception as e:
-        error_msg = f"❌ Endpoint test failed: {str(e)[:300]}"
-        await message.answer(error_msg, parse_mode=None)
-        
 # p_handler.py'ye ekle
 @router.message(Command("debug_router"))
 async def debug_router(message: Message):
@@ -888,6 +672,7 @@ async def debug_router(message: Message):
         response += f"... and {len(handler_info) - 10} more\n"
     
     await message.answer(response, parse_mode=None)
+
 
 @router.message(Command("debug_endpoints"))
 async def debug_endpoints(message: Message):
@@ -921,11 +706,6 @@ async def debug_endpoints(message: Message):
     except Exception as e:
         await message.answer(f"❌ Endpoints debug failed: {e}")        
  
-# p_handler.py'ye ekle - EN BASİT TEST
-@router.message(Command("echo"))
-async def echo_test(message: Message):
-    """Simple echo test to check if handler works"""
-    await message.answer("✅ Echo test successful! Handler is working.", parse_mode=None)
 
 # p_handler.py'ye ekle - TÜM KOMUTLARI LİSTELE
 @router.message(Command("list_commands"))
@@ -951,42 +731,7 @@ async def list_commands(message: Message):
     response = "📋 **Available Commands**\n" + "\n".join(commands)
     await message.answer(response, parse_mode=None)
 
-
-
-# p_handler.py'ye ekle
-@router.message(Command("compare_speed"))
-async def compare_speed(message: Message):
-    """Compare limited vs unlimited speed"""
-    user_id = message.from_user.id
-    
-    try:
-        import time
-        
-        # Test 1: Limited
-        start_time = time.time()
-        limited_data = await price_handler.binance.get_data(user_id, "ticker_24hr_limited", limit=100)
-        limited_time = time.time() - start_time
-        
-        # Test 2: HTTP Fallback
-        start_time = time.time()
-        http_data = await price_handler._http_fallback(user_id)
-        http_time = time.time() - start_time
-        
-        response = f"⏱️ **Speed Comparison**\n"
-        response += f"Limited API: {limited_time:.2f}s - {len(limited_data) if limited_data else 0} symbols\n"
-        response += f"HTTP Fallback: {http_time:.2f}s - {len(http_data) if http_data else 0} symbols\n"
-        
-        if limited_data and http_data:
-            limited_usdt = len([x for x in limited_data if x.get('symbol', '').endswith('USDT')])
-            http_usdt = len([x for x in http_data if x.get('symbol', '').endswith('USDT')])
-            response += f"Limited USDT: {limited_usdt} | HTTP USDT: {http_usdt}\n"
-        
-        await message.answer(response, parse_mode=None)
-        
-    except Exception as e:
-        error_msg = f"❌ Speed test failed: {str(e)[:200]}"
-        await message.answer(error_msg, parse_mode=None)    
-    
+  
 # ============================================================
 # STARTUP / SHUTDOWN HOOKS
 # ============================================================
