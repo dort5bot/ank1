@@ -188,23 +188,43 @@ class BaseManager:
         """Ensure database is initialized"""
         return await self.initialize_database()         
 
+
+    # utils/apikey_manager.py'de BaseManager.initialize_database()'i düzelt
     @classmethod
     async def initialize_database(cls) -> bool:
-        """Tüm database initialization burada - TEK NOKTA"""
+        """Basitleştirilmiş database initialization"""
         if cls._db_initialized:
             return True
             
-        async with cls._db_init_lock:
-            try:
-                manager = cls()  # Herhangi bir manager instance'ı
-                success = await manager.init_db()
-                if success:
-                    cls._db_initialized = True
-                    logger.info("✅ Database initialized successfully")
-                return success
-            except Exception as e:
-                logger.error(f"❌ Database initialization failed: {e}")
-                return False
+        try:
+            # Database path kontrolü
+            db_path = Path(cls._db_path or "data/apikeys.db")
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Basit tablo oluşturma
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute("PRAGMA journal_mode=WAL")
+                await db.execute("PRAGMA foreign_keys=ON")
+                
+                # Sadece gerekli tabloları oluştur
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS apikeys (
+                        user_id INTEGER PRIMARY KEY,
+                        api_key_encrypted TEXT NOT NULL,
+                        api_secret_encrypted TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+            cls._db_initialized = True
+            logger.info("✅ Database initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}")
+            return False
+            
+
 
 
     @classmethod

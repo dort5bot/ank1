@@ -228,15 +228,35 @@ class HandlerLoader:
             result.failed += 1
             result.errors.append(f"Unexpected error: {module_name} - {str(e)}")
     
+
+    # handler_loader.py - _count_router_handlers iyileştirmesi
     async def _count_router_handlers(self, router, module) -> int:
-        """Router'daki handler sayısını tahmin et."""
+        """Router'daki handler sayısını daha doğru tahmin et."""
         try:
-            # Method 1: Module source code'dan decorator say
+            # Method 1: Router'ın içindeki handler'ları say
+            if hasattr(router, 'sub_routers'):
+                total_handlers = 0
+                # Ana router ve sub router'ları kontrol et
+                all_routers = [router] + router.sub_routers
+                for r in all_routers:
+                    # Message handler'ları
+                    if hasattr(r, 'message'):
+                        total_handlers += 1
+                    # Callback handler'ları  
+                    if hasattr(r, 'callback_query'):
+                        total_handlers += 1
+                    # Diğer handler türleri...
+                return max(total_handlers, 1)
+            
+            # Method 2: Fallback - module source code'dan say
             source_code = inspect.getsource(module)
             decorator_count = source_code.count('@router.')
-            return max(decorator_count, 1)  # En az 1
+            return max(decorator_count, 1)
+            
         except:
             return 1  # Fallback
+        
+    
     
     async def _create_default_handlers(self):
         """Create default handler structure if it doesn't exist."""

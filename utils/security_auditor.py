@@ -4,6 +4,12 @@ Enhanced security auditing and sanitization
 ANA GÜVENLİK MODÜLÜ
 """
 
+"""
+utils/security_auditor.py
+Enhanced security auditing and sanitization
+ANA GÜVENLİK MODÜLÜ
+"""
+
 import logging
 import re
 from typing import Dict, Any, Optional, List
@@ -23,7 +29,8 @@ class SecurityAuditor:
         # Endpoint configuration cache
         self._endpoint_configs: Dict[str, Dict[str, Any]] = {}
     
-    def _get_endpoint_config(self, endpoint: str) -> Dict[str, Any]:
+    # ✅ DÜZELTME: Async method yap
+    async def _get_endpoint_config(self, endpoint: str) -> Dict[str, Any]:
         """
         Get endpoint configuration from BinanceAggregator maps.
         Bu metod BinanceAggregator'dan endpoint konfigürasyonunu alır.
@@ -36,7 +43,8 @@ class SecurityAuditor:
             # BinanceAggregator instance'ına eriş
             from utils.binance_api.binance_a import BinanceAggregator
             
-            aggregator = BinanceAggregator.get_instance()
+            # ✅ CRITICAL DÜZELTME: await ekle
+            aggregator = await BinanceAggregator.get_instance()
             if hasattr(aggregator, 'map_loader'):
                 endpoint_config = aggregator.map_loader.get_endpoint(endpoint)
                 
@@ -91,11 +99,12 @@ class SecurityAuditor:
             logger.debug(f"🔍 Unknown endpoint '{endpoint}', assuming public")
             return {'signed': False}
     
-    def _is_private_endpoint(self, endpoint: str) -> bool:
+    # ✅ DÜZELTME: Async method yap
+    async def _is_private_endpoint(self, endpoint: str) -> bool:
         """
         Check if endpoint requires authentication.
         """
-        config = self._get_endpoint_config(endpoint)
+        config = await self._get_endpoint_config(endpoint)
         return config.get('signed', False)
     
     @staticmethod
@@ -127,8 +136,8 @@ class SecurityAuditor:
         """Gelişmiş güvenlik audit'i - user_id optional"""
         
         try:
-            # Endpoint config al
-            is_private = self._is_private_endpoint(endpoint)
+            # ✅ DÜZELTME: await ekle
+            is_private = await self._is_private_endpoint(endpoint)
             
             # KRİTİK KURAL: Private endpoint + user_id=None → REDDET
             if is_private and user_id is None:
@@ -141,7 +150,7 @@ class SecurityAuditor:
                 return False
             
             # Parameter validation
-            if not self._validate_parameters(endpoint, params):
+            if not await self._validate_parameters(endpoint, params):
                 logger.warning(f"🚨 Invalid parameters from user {user_id}: {endpoint}")
                 return False
             
@@ -180,19 +189,31 @@ class SecurityAuditor:
         self.suspicious_activities[user_id].append(now)
         return False
     
-
-    def _validate_parameters(self, endpoint: str, params: Dict[str, Any]) -> bool:
+    # ✅ DÜZELTME: Async method yap
+    async def _validate_parameters(self, endpoint: str, params: Dict[str, Any]) -> bool:
         """Security auditor'dan validator'ı kullan"""
         try:
             from utils.binance_api.b_map_validator import validator
-            endpoint_config = self._get_endpoint_config(endpoint)
+            endpoint_config = await self._get_endpoint_config(endpoint)
             return validator.validate_parameters(endpoint, params, endpoint_config or {})
         except Exception as e:
             logger.error(f"❌ Validator integration failed: {e}")
             return self._fallback_parameter_validation(endpoint, params)
-            
-            
-
+    
+    def _fallback_parameter_validation(self, endpoint: str, params: Dict[str, Any]) -> bool:
+        """Fallback parameter validation"""
+        # Basit validation kuralları
+        if 'symbol' in params:
+            symbol = params['symbol']
+            if not isinstance(symbol, str) or len(symbol) > 20:
+                return False
+                
+        if 'limit' in params:
+            limit = params['limit']
+            if not isinstance(limit, int) or limit <= 0 or limit > 1000:
+                return False
+                
+        return True
     
     def _detect_suspicious_patterns(self, params: Dict[str, Any]) -> bool:
         """Şüpheli pattern'leri tespit et"""
@@ -223,8 +244,6 @@ class SecurityAuditor:
 
 # Global instance
 security_auditor = SecurityAuditor()
-
-
 
 """
 _get_endpoint_config metodunu ekledim - Endpoint konfigürasyonunu alır
