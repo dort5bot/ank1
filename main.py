@@ -10,6 +10,7 @@ USE_WEBHOOK=true python main.py
 
 # main.py - İYİLEŞTİRİLMİŞ IMPORT
 import os
+import sys
 import asyncio
 import logging
 import signal
@@ -295,26 +296,27 @@ async def initialize_binance_api() -> Optional[Any]:
 # Handler Loading - ENHANCED HANDLER LOADING SYSTEM
 # ---------------------------------------------------------------------
 
-async def initialize_handlers(dispatcher_instance: Dispatcher) -> Dict[str, int]:
-    """Initialize handlers with comprehensive logging."""
+# main.py - DEĞİŞTİRİLMİŞ KISIM
+
+async def load_and_initialize_handlers(dispatcher_instance: Dispatcher) -> Dict[str, int]:
+    """Handler'ları yükle ve initialize et - handler_loader'ı kullan"""
     try:
-        # 2- Handler'ları yükle 
-        loader = HandlerLoader(dispatcher=dispatcher_instance)
-        load_results = await loader.load_handlers(dispatcher_instance)
+        # handler_loader.py'deki fonksiyonu kullan
+        from utils.handler_loader import initialize_handlers as loader_initialize
+        load_results = await loader_initialize(dispatcher_instance)
         
-        # 3- Router bilgilerini BASİT şekilde logla
+        # Router bilgilerini logla
         if dispatcher_instance and hasattr(dispatcher_instance, 'sub_routers'):
             router_count = len(dispatcher_instance.sub_routers)
             logger.info(f"📋 Loaded {router_count} routers")
             
-            # Router isimlerini logla
             for i, router in enumerate(dispatcher_instance.sub_routers):
                 router_name = getattr(router, 'name', f'router_{i}')
                 logger.info(f"   🎯 Router {i+1}: {router_name}")
         
         logger.info(f"📊 Handler loading results: {load_results}")
         
-        # 4- Eğer hiç handler yüklenmediyse, emergency handler ekle
+        # Emergency handler kontrolü
         if load_results.get('loaded', 0) == 0:
             logger.warning("⚠️ No handlers loaded - adding emergency handler")
             await add_emergency_handlers(dispatcher_instance)
@@ -325,7 +327,6 @@ async def initialize_handlers(dispatcher_instance: Dispatcher) -> Dict[str, int]
     except Exception as e:
         logger.error(f"❌ Handler loading error: {e}")
         return {"loaded": 0, "failed": 1, "error_type": str(e)}
-
    
 
 async def add_emergency_handlers(dispatcher_instance: Dispatcher):
@@ -415,7 +416,8 @@ async def on_startup(bot: Bot) -> None:
         webhook_info = await bot.get_webhook_info()
         logger.info(f"🌐 Webhook URL: {webhook_info.url}")
         logger.info(f"📊 Pending updates: {webhook_info.pending_update_count}")
-        
+        logger.info(f"❌ Last error: {webhook_info.last_error_message}")
+                      
         if webhook_info.pending_update_count > 0:
             logger.info("🔄 Processing pending updates...")
         
@@ -476,27 +478,54 @@ async def health_check(request: web.Request) -> web.Response:
 
 
 async def initialize_managers():
-    """TEK ve AÇIK initialization, gerekirse utils/__init__.py içine taşınıp merkezi olabilir"""
+    """Manager initialization with proper error handling"""
     try:
         logger.info("🔄 Initializing managers...")
         
-        # Database initialization
-        success = await BaseManager.initialize_database()
-        if success:
-            # Manager instance'larını oluştur
+        # Database initialization with timeout
+        try:
+            success = await asyncio.wait_for(
+                BaseManager.initialize_database(), 
+                timeout=10.0
+            )
+            if success:
+                logger.info("✅ Database initialized successfully")
+            else:
+                logger.warning("⚠️ Database initialization failed - running without database")
+        except asyncio.TimeoutError:
+            logger.error("❌ Database initialization timeout - skipping database")
+            success = False
+        except Exception as e:
+            logger.error(f"❌ Database initialization error: {e}")
+            success = False
+        
+        # Manager instances (database başarısız olsa bile oluştur)
+        try:
             APIKeyManager.get_instance()
-            AlarmManager.get_instance() 
+            logger.info("✅ APIKeyManager created")
+        except Exception as e:
+            logger.warning(f"⚠️ APIKeyManager creation warning: {e}")
+            
+        try:
+            AlarmManager.get_instance()
+            logger.info("✅ AlarmManager created")
+        except Exception as e:
+            logger.warning(f"⚠️ AlarmManager creation warning: {e}")
+            
+        try:
             TradeSettingsManager.get_instance()
-            
-            logger.info("✅ All managers initialized successfully")
-        else:
-            logger.error("❌ Database initialization failed")
-            
-        return success
+            logger.info("✅ TradeSettingsManager created")
+        except Exception as e:
+            logger.warning(f"⚠️ TradeSettingsManager creation warning: {e}")
+        
+        logger.info("✅ All managers initialized")
+        return True
         
     except Exception as e:
         logger.error(f"❌ Manager initialization failed: {e}")
-        return False
+        # Yine de True dön, bot database olmadan da çalışsın
+        return True
+
 
 async def _perform_health_check(handler_info: dict = None) -> web.Response:
     """Internal health check implementation without timeout."""
@@ -663,10 +692,10 @@ async def check_services() -> Dict[str, Any]:
 
 # ---------------------------------------------------------------------
 # LIFESPAN MANAGEMENT - sadeleştir - tekrar olmasın
-
+"""
 @asynccontextmanager
 async def lifespan(config: BotConfig):
-    """Basitleştirilmiş lifespan - TÜM initialization burada"""
+    #Basitleştirilmiş lifespan - TÜM initialization burada
     global bot, dispatcher, binance_api, app_config
     
     try:
@@ -702,7 +731,7 @@ async def lifespan(config: BotConfig):
         
         # ✅ 5-HANDLER'ları YÜKLE
         logger.info("🔄 Loading handlers...")
-        load_results = await initialize_handlers(dispatcher)
+        load_results = await load_and_initialize_handlers(dispatcher)  # ← DEĞİŞTİRİLDİ
         logger.info(f"📊 Handler loading results: {load_results}")
         
         # ✅ 6- STARTUP KONTROLÜ (YENİ & DOĞRU fonksiyonla)
@@ -718,6 +747,61 @@ async def lifespan(config: BotConfig):
         raise
     finally:
         ContextAwareLogger.remove_context('lifecycle_phase')
+"""
+
+@asynccontextmanager
+async def lifespan(config: BotConfig):
+    """Basitleştirilmiş lifespan - TÜM initialization burada"""
+    print("DEBUG: lifespan started")
+    
+    global bot, dispatcher, binance_api, app_config
+    
+    try:
+        app_config = config
+        print("DEBUG: Config set")
+
+        # ✅ MANAGER'LARI BAŞLAT
+        print("DEBUG: Initializing managers...")
+        if not await initialize_managers():
+            raise RuntimeError("Manager initialization failed")
+        print("DEBUG: Managers initialized")
+
+        # ✅ BOT VE DİSPATCHER
+        print("DEBUG: Creating bot instance...")
+        bot = await create_bot_instance(config=app_config)
+        dispatcher = Dispatcher()
+        print("DEBUG: Bot and dispatcher created")
+
+        # ✅ ERROR HANDLER & MIDDLEWARE
+        print("DEBUG: Setting up error handler and middleware...")
+        dispatcher.errors.register(error_handler)
+        dispatcher.update.outer_middleware(LoggingMiddleware())
+        dispatcher.update.outer_middleware(AuthenticationMiddleware())
+        print("DEBUG: Error handler and middleware set")
+
+        # ✅ HANDLER'LARI YÜKLE
+        print("DEBUG: Loading handlers...")
+        load_results = await load_and_initialize_handlers(dispatcher)
+        print(f"DEBUG: Handlers loaded: {load_results}")
+
+        # ✅ STARTUP KONTROLÜ
+        print("DEBUG: Running startup sequence...")
+        startup_ok = await startup_sequence(dispatcher)
+        if not startup_ok:
+            raise RuntimeError("Startup sequence failed")
+        print("DEBUG: Startup sequence completed")
+
+        print("DEBUG: All components initialized successfully")
+        yield
+        
+    except Exception as e:
+        print(f"DEBUG: Error in lifespan: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        print("DEBUG: Lifespan cleanup")
+
 
 # ---------------------------------------------------------------------
 # CLEANUP FUNCTION -  PERIODIC CLEANUP TASKS
@@ -810,7 +894,7 @@ async def start_periodic_cleanup():
 # ÇALIŞMA MODU KONFİGÜRASYONU
 # ---------------------------------------------------------------------
 def get_bot_mode() -> str:
-    """Bot çalışma modunu belirle"""
+    #Bot çalışma modunu belirle
     # Oracle ortamında webhook, local'de polling
     if any(env_var in os.environ for env_var in ['ORACLE', 'OCI_', 'OPC_']):
         return "webhook"
@@ -824,12 +908,13 @@ def get_bot_mode() -> str:
 
 
 
+
 # ---------------------------------------------------------------------
 # OPTIMIZED MAIN ENTRY POINT - CONFIG TABANLI
 # ---------------------------------------------------------------------
-
+"""
 async def app_entry():
-    """Config tabanlı çift modlu main entry"""
+    #Config tabanlı çift modlu main entry
     global app_config, runner, bot, dispatcher
     
     try:
@@ -877,8 +962,67 @@ async def app_entry():
         raise
     finally:
         await cleanup_resources()
-
+"""
      
+async def app_entry():
+    """Config tabanlı çift modlu main entry"""
+    print("DEBUG: app_entry started")
+    
+    global app_config, runner, bot, dispatcher
+    
+    try:
+        # ✅ Config yükle
+        print("DEBUG: Loading configuration...")
+        app_config = await get_config()
+        print(f"DEBUG: Config loaded - USE_WEBHOOK: {app_config.USE_WEBHOOK}")
+        
+        # ✅ Config'ten modu oku
+        bot_mode = "webhook" if app_config.USE_WEBHOOK else "polling"
+        print(f"DEBUG: Starting in {bot_mode} mode")
+        
+        # ✅ Lifespan ile bileşenleri başlat
+        print("DEBUG: Starting lifespan...")
+        async with lifespan(app_config):
+            print("DEBUG: Lifespan completed successfully")
+            
+            if app_config.USE_WEBHOOK:
+                # ✅ WEBHOOK MODU
+                print("DEBUG: Webhook mode - creating app...")
+                app = await create_app()
+                runner = web.AppRunner(app)
+                await runner.setup()
+                site = web.TCPSite(runner, host=app_config.WEBAPP_HOST, port=app_config.WEBAPP_PORT)
+                await site.start()
+                print(f"DEBUG: Webhook server started on port {app_config.WEBAPP_PORT}")
+                
+                # ✅ Bekle
+                print("DEBUG: Waiting for shutdown...")
+                await shutdown_event.wait()
+                
+            else:
+                # ✅ POLLING MODU
+                print("DEBUG: Polling mode - starting polling...")
+                
+                # CRITICAL: Webhook'u temizle
+                try:
+                    await bot.delete_webhook(drop_pending_updates=True)
+                    print("DEBUG: Webhook cleared successfully")
+                except Exception as e:
+                    print(f"DEBUG: Webhook cleanup warning: {e}")
+                
+                print("DEBUG: Starting dispatcher polling...")
+                await dispatcher.start_polling(bot)
+                print("DEBUG: Polling started successfully")
+                
+    except Exception as e:
+        print(f"DEBUG: Fatal error in app_entry: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        print("DEBUG: Cleaning up resources...")
+        await cleanup_resources()
+
 
 
 async def create_app() -> web.Application:
@@ -886,7 +1030,7 @@ async def create_app() -> web.Application:
     global bot, dispatcher, app_config
     
     # ✅ LIFESPAN SADECE BURADA - create_app içinde
-    app = web.Application()
+    #sil app = web.Application()
     
     # Route'ları önce ekle
     app.router.add_get("/", health_check)
@@ -895,14 +1039,17 @@ async def create_app() -> web.Application:
     
     # ✅ SONRA lifespan ile initialization
     async with lifespan(app_config):
+        
         # Webhook setup
+        # ✅ WEBHOOK  - token parametresini KALDIR
         if app_config.WEBHOOK_HOST:
             webhook_handler = SimpleRequestHandler(
                 dispatcher=dispatcher,
                 bot=bot,
                 secret_token=getattr(app_config, "WEBHOOK_SECRET", None)
             )
-            webhook_handler.register(app, path="/webhook/{token}")
+            # SADECE "/webhook" path'ini kullan
+            webhook_handler.register(app, path="/webhook")
         
         # Hooks
         app.on_startup.append(lambda app: on_startup(bot))
@@ -910,8 +1057,8 @@ async def create_app() -> web.Application:
         
         # Aiogram setup
         setup_application(app, dispatcher, bot=bot)
-    
-    return app
+        
+        return app
     
 # ---------------------------------------------------------------------
 # POLLING MODU İÇİN SHUTDOWN DESTEĞİ
@@ -1051,7 +1198,8 @@ async def register_user_complete(self, user_id: int, user_data: dict) -> bool:
         await db.rollback()
         logger.error(f"❌ User registration failed for {user_id}: {e}")
         return False
-   
+  
+"""  
 # ---------------------------------------------------------------------
 # MAIN EXECUTION
 # ---------------------------------------------------------------------
@@ -1063,3 +1211,44 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💥 Fatal error: {e}")
         exit(1)
+"""
+
+# ---------------------------------------------------------------------
+# MAIN EXECUTION - FIXED VERSION
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# MAIN EXECUTION - FIXED VERSION (NO EMOJI)
+# ---------------------------------------------------------------------
+
+async def main_async():
+    """Async main entry point"""
+    try:
+        await app_entry()
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+def main():
+    """Main entry point with Windows fix - NO EMOJI"""
+    try:
+        # Windows asyncio FIX
+        if sys.platform == 'win32':
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        
+        print("Starting bot with Windows asyncio fix...")
+        asyncio.run(main_async())
+        
+    except KeyboardInterrupt:
+        print("Bot stopped by user (KeyboardInterrupt)")
+    except Exception as e:
+        print(f"Critical error in main: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Press Enter to exit...")
+
+if __name__ == "__main__":
+    main()
