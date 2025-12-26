@@ -285,9 +285,18 @@ async def initialize_binance_api() -> Optional[Any]:
     
     try:
         logger.info("🔄 Initializing Binance API...")
-        aggregator = BinanceAggregator.get_instance()
+        
+        # ✅ ÖNCE API Key Manager'ı initialize et
+        #from utils.apikey_manager import APIKeyManager
+        api_manager = await APIKeyManager.get_instance()
+        await api_manager.ensure_db_initialized()  # ✅ AWAIT EKLE
+        
+        # ✅ SONRA BinanceAggregator'ı başlat
+        aggregator = await BinanceAggregator.get_instance()
         logger.info("✅ Binance API initialized successfully")
         return aggregator
+        
+        
     except Exception as e:
         logger.error(f"❌ Binance API initialization failed: {e}")
         return None
@@ -476,44 +485,54 @@ async def health_check(request: web.Request) -> web.Response:
         }, status=500)
 
 
+# APIKeyManager, AlarmManager ve TradeSettingsManager gibi yönetici sınıflarını oluşturmak.
 
 async def initialize_managers():
     """Manager initialization with proper error handling"""
     try:
         logger.info("🔄 Initializing managers...")
+        # ✅ TÜM Manager'lar ASYNC - HEPSİ İÇİN AWAIT GEREKİR
         
-        # Database initialization with timeout
-        try:
-            success = await asyncio.wait_for(
-                BaseManager.initialize_database(), 
-                timeout=10.0
-            )
-            if success:
-                logger.info("✅ Database initialized successfully")
-            else:
-                logger.warning("⚠️ Database initialization failed - running without database")
-        except asyncio.TimeoutError:
-            logger.error("❌ Database initialization timeout - skipping database")
-            success = False
-        except Exception as e:
-            logger.error(f"❌ Database initialization error: {e}")
-            success = False
+        # ✅ SADECE BİR KEZ database initialize et
+        success = False
+        if not BaseManager._db_initialized:
+            try:
+                success = await asyncio.wait_for(
+                    BaseManager.initialize_database(), 
+                    timeout=10.0
+                )
+                if success:
+                    logger.info("✅ Database initialized successfully")
+                else:
+                    logger.warning("⚠️ Database initialization failed - running without database")
+            except asyncio.TimeoutError:
+                logger.error("❌ Database initialization timeout - skipping database")
+                success = False
+            except Exception as e:
+                logger.error(f"❌ Database initialization error: {e}")
+                success = False
+        else:
+            logger.info("✅ Database already initialized")
+            success = True
         
-        # Manager instances (database başarısız olsa bile oluştur)
+        # ✅ Manager instances (database başarısız olsa bile oluştur) - TÜMÜ İÇİN AWAIT
         try:
-            APIKeyManager.get_instance()
+            # ✅ BU ASYNC - AWAIT GEREKİYOR
+            api_manager = await APIKeyManager.get_instance()
             logger.info("✅ APIKeyManager created")
         except Exception as e:
             logger.warning(f"⚠️ APIKeyManager creation warning: {e}")
             
         try:
-            AlarmManager.get_instance()
+            # ✅ BU DA ARTIK ASYNC - AWAIT GEREKİYOR
+            alarm_manager = await AlarmManager.get_instance()
             logger.info("✅ AlarmManager created")
         except Exception as e:
             logger.warning(f"⚠️ AlarmManager creation warning: {e}")
             
         try:
-            TradeSettingsManager.get_instance()
+            # ✅ BU DA ARTIK ASYNC - AWAIT GEREKİYOR
+            trade_manager = await TradeSettingsManager.get_instance()
             logger.info("✅ TradeSettingsManager created")
         except Exception as e:
             logger.warning(f"⚠️ TradeSettingsManager creation warning: {e}")
@@ -523,9 +542,8 @@ async def initialize_managers():
         
     except Exception as e:
         logger.error(f"❌ Manager initialization failed: {e}")
-        # Yine de True dön, bot database olmadan da çalışsın
         return True
-
+        
 
 async def _perform_health_check(handler_info: dict = None) -> web.Response:
     """Internal health check implementation without timeout."""
@@ -1029,8 +1047,9 @@ async def create_app() -> web.Application:
     """Ana app creator - lifespan BURADA"""
     global bot, dispatcher, app_config
     
-    # ✅ LIFESPAN SADECE BURADA - create_app içinde
-    #sil app = web.Application()
+    # 
+    #sil25
+    app = web.Application()
     
     # Route'ları önce ekle
     app.router.add_get("/", health_check)

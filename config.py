@@ -114,19 +114,6 @@ class BinanceConfig:
         ADAPTIVE_RATE_LIMITING: bool = True
         WEIGHT_BUFFER_PERCENTAGE: float = 0.1  # 10% buffer
 
-    class CircuitBreaker:
-        """Circuit breaker configuration for fault tolerance."""
-        ENABLED: bool = True
-        FAILURE_THRESHOLD: int = 5
-        RESET_TIMEOUT: float = 60.0  # seconds
-        HALF_OPEN_TIMEOUT: float = 30.0  # seconds
-        MAX_HALF_OPEN_CALLS: int = 1
-        
-        # Multi-user circuit breaker
-        USER_CIRCUIT_BREAKER_ENABLED: bool = True
-        MAX_CACHE_SIZE: int = 1000
-        TTL_SECONDS: int = 3600
-
     class HTTPClient:
         """HTTP client configuration for async requests."""
         TIMEOUT: int = 30  # seconds
@@ -442,7 +429,7 @@ class EncryptionConfig:
             logger.info(f"✅ Created database directory: {db_dir}")
         return db_url
 
-# scan coin/ sayı vb merkezi yönetim
+# config.py > scan coin/ sayı vb merkezi yönetim
 @dataclass
 class ScanConfig:
     """Market scan configuration."""
@@ -450,11 +437,11 @@ class ScanConfig:
     SCAN_DEFAULT_COUNT: int = field(default_factory=lambda: int(os.getenv("SCAN_DEFAULT_COUNT", "20")))
     SCAN_MAX_COUNT: int = field(default_factory=lambda: int(os.getenv("SCAN_MAX_COUNT", "50")))
     
-    # Symbol lists
+    # Priority symbols for quick scanning
     SCAN_SYMBOLS: List[str] = field(default_factory=lambda: [
         symbol.strip() for symbol in os.getenv(
             "SCAN_SYMBOLS", 
-            "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,AVAXUSDT,MATICUSDT,OPUSDT,DOTUSDT,LINKUSDT,TRXUSDT,ATOMUSDT,CAKEUSDT,LTCUSDT,ARPAUSDT,TURBOUSDT,SUIUSDT,PEPEUSDT,SHIBUSDT"
+            "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,PEPEUSDT,ALICEUSDT,FETUSDT,LINKUSDT,TRXUSDT,CAKEUSDT,LTCUSDT,ARPAUSDT,TURBOUSDT,SUIUSDT,PEPEUSDT,SHIBUSDT"
 
         ).split(",") if symbol.strip()
     ])
