@@ -4,67 +4,6 @@ fetch_data_for_pipeline şunları yapar:
 required_endpoints = ["klines"] (sadece klines)
 fetcher.fetch_all_for_symbol("BTCUSDT", ["klines"])
 Binance'den klines verisini çeker
-_klines_to_dataframe ile DataFrame'e çevirir:
-
-calculate_metrics> classical.py'deki ema
-
-“Yükselme ihtimali” skoru (Composite Alpha)
-ALPHA_SCORE =
- + 0.30 * trend
- + 0.20 * core
- + 0.15 * mom
- + 0.15 * sentiment
- + 0.10 * flow
- - 0.10 * risk
- 
- Yorum
-Trend + Core ana motor
-Volmom = erken ivme
-Sentiment + Flow = yakıt
-Risk = frene basan el
-Bu skor handler’da değil core’da üretilmeli
-
-
-
-🔥 beyin: (alphax + core + risk)
-
-🧠 alphax
-trend + mom + sentiment + flow - risk
-→ “Yükselme / düşme isteği var mı?”
-
-🧱 core
-trend + vol + regim + risk
-→ “Bu istek yapısal olarak sağlıklı mı?”
-
-🚨 risk
-→ “Her şey güzel ama patlar mı?”
-
-✅ LONG için ideal senaryo
-alphax > +0.35
-core   > +0.20
-risk   < 0.30
-
-
-❌ Sahte yükseliş (çok kritik!)
-alphax > +0.40
-core   < 0
-risk   > 0.50
-
-
-Trend-follow uygun mu?
-complexity < 0.4
-vol        < 0.5
-regim      > 0
-
-Chop / range ortamı
-📌 Bu kombinasyon olmadan trend sinyali kullanmak kör uçuş olur.
-complexity > 0.6
-regim      < 0
-
-
-Trade açılabilir mi?
-microstructure > 0
-liqrisk        < 0.3
 
 -özet--
 | Amaç                          | Gerekli Kombinasyon        |
@@ -123,41 +62,70 @@ DEFAULT_DATA_MODEL = "pandas"
 # ------------------------------------------------------------
 # COMPOSITES / MACROS maps 
 # ------------------------------------------------------------
+"""
+composite veya macro SADECE 1 cevap vermeli:
+yön mü?
+filtre mi?
+risk mi?
+"""
+
 
 COMPOSITES = {
-    # ✅ binance api ile başarılı
-    "trend": { # Sadece directional bias
+    
+    # ✅ Başrılı-anlamlı
+    # "trend","mom","vol",
+    "trend": { # Piyasa long mu short mu
         "depends": ["ema", "macd", "rsi", "stochastic_oscillator"],
         "formula": "0.30*ema + 0.30*macd + 0.20*rsi + 0.20*stochastic_oscillator",
     },
-    "mom": { # Hareket var mı ve güçleniyor mu
+    "mom": { # Hareket var mı: Trend başlar mı / devam eder
         "depends": ["roc", "adx", "atr"],
         "formula": "0.45*roc + 0.35*adx - 0.20*atr",
     },
-    "vol": { # Bu piyasa trend taşır mı
+    "vol": { # Piyasada Trend taşınır mı, chop mu
         "depends": ["historical_volatility", "garch_1_1", "hurst_exponent"],
         "formula": "0.40*historical_volatility + 0.35*garch_1_1 + 0.25*(1 - hurst_exponent)",
     },
+    "vols": { #→ pozisyon & stop vol’un davranışı 
+        "depends": ["historical_volatility", "vol_of_vol", "garch_1_1"],
+        "formula": "0.4*historical_volatility + 0.35*vol_of_vol + 0.25*garch_1_1",
+    },
     
-    # ✅ ⚠️ Hesaplanabilir, yaklaşık bilgi veriri, gerçek anlamlılık sınırlı.
-    "sentiment": {
+    
+    "sntp": { #→ move gerçek mi? sentiment’in güçlü hali: Trend parayla mı Fake mi 
+    # DB / süreç ŞART
+        "depends": ["oi_trend", "oi_growth_rate", "oi_price_correlation"],
+        "formula": "0.4*oi_trend + 0.35*oi_growth_rate + 0.25*oi_price_correlation",
+    },
+    "strs": { #stress→ risk-off alarmı risk’in daha akıllısı: piyasa sıkışıyor mu: trade kapat, haber öncesi
+    # DB / süreç ŞART
+        "depends": ["funding_stress_risk","open_interest_shock_risk","spread_risk"],
+        "formula": "0.4*funding_stress_risk + 0.35*open_interest_shock_risk + 0.25*spread_risk",
+    },
+
+
+    # ⚠️✅⚠️ Hesaplanabilir, yaklaşık bilgi verir, gerçek anlamlılık sınırlı.
+    # "regim","entropy","risk"
+    "sentiment": { # YARDIMCI Herkes aynı tarafta mı, Binance ile yaklaşık bilgi verir, çöp değil
         "depends": ["funding_rate", "funding_premium", "oi_trend"],
         "formula": "0.35*funding_rate + 0.25*funding_premium + 0.40*oi_trend",
     },
-    "risk": {
-        "depends": ["volatility_risk", "liquidity_depth_risk", "price_impact_risk"],
-        "formula": "0.40*volatility_risk + 0.35*liquidity_depth_risk + 0.25*price_impact_risk",
-    },
-    "regim": {
-        "depends": ["advance_decline_line", "volume_leadership", "performance_dispersion"],
-        "formula": "0.45*advance_decline_line + 0.35*volume_leadership + 0.20*performance_dispersion",
-    },
-    "entropy": {# entropy_fractal
+    "entropy": {# YARDIMCI. entropy_fractal
         "depends": ["entropy_index", "fractal_dimension_index_fdi", "hurst_exponent", "variance_ratio_test"],
         "formula": "0.35*entropy_index + 0.25*fractal_dimension_index_fdi - 0.25*hurst_exponent - 0.15*variance_ratio_test",
     },
     
-    # ⚠️ anlamsız metrikler, yetersiz veri nedeniyle
+    "risk": { # ⚠️ POZİSYON FİLTRESİ
+        "depends": ["volatility_risk", "liquidity_depth_risk", "price_impact_risk"],
+        "formula": "0.40*volatility_risk + 0.35*liquidity_depth_risk + 0.25*price_impact_risk",
+    },
+    "regim": { # ⚠️ ZAYIF
+        "depends": ["advance_decline_line", "volume_leadership", "performance_dispersion"],
+        "formula": "0.45*advance_decline_line + 0.35*volume_leadership + 0.20*performance_dispersion",
+    },
+    
+    
+    # ❌ BOŞA EMEK, SİL  ek veri yoksa dur) ⚠️ anlamsız metrikler, yetersiz veri nedeniyle
     "liqu": {
         "depends": ["liquidity_density","microprice_deviation"],
         "formula": "0.5*liquidity_density+0.5*microprice_deviation",
@@ -186,26 +154,32 @@ COMPOSITES = {
 
 
 MACROS = {	
-    "core": {
-        "depends": ["trend", "vol", "regim", "risk"],
-        "formula": "0.35*trend + 0.25*vol + 0.25*regim + 0.15*risk",
+    "core": { #→ karar: ANA METRİK: pusula: Trade bias / pozisyon yönü için ideal
+        "depends": ["trend", "mom", "vol", "risk"],
+        "formula": "0.35*trend + 0.25*mom + 0.25*vol - 0.15*risk",
+    },
+    "regf": { #→ strateji seçimi: regime_filter
+        "depends": ["regim", "entropy", "hurst_exponent"],
+        "formula": "0.45*regim + 0.35*entropy + 0.20*(1 - hurst_exponent)",
+    },
+    "cpxy": { #→ filtre: Piyasa karmaşık mı, Strateji seçimi
+        "depends": ["entropy", "vol"],
+        "formula": "0.6*entropy + 0.4*vol",
+    },  
+
+    
+    # ⚠️ SİL -  sonraki  makrolar çöp uğraşma
+    "coreliq": {
+        "depends": ["trend", "vol", "regim", "risk", "liqu"],
+        "formula": "0.27*trend + 0.20*vol + 0.20*regim + 0.18*risk + 0.15*liqu",
     },
     "alphax":{
         "depends": ["trend","mom","sentiment","flow","risk"],
         "formula": "0.35*trend + 0.25*mom + 0.20*sentiment + 0.15*flow - 0.15*risk", 
     },
-    "sentri": { # Sinyal > 0 long, = 0 bekle, <0 short
+    "sentri": { 
         "depends": ["sentiment", "entropy", "regim", "liquidity_density", "risk"],
         "formula": "0.24*sentiment + 0.18*entropy + 0.2*regim+ 0.2*liquidity_density - 0.18*risk",
-    },
-    
-    "coreliq": {
-        "depends": ["trend", "vol", "regim", "risk", "liqu"],
-        "formula": "0.27*trend + 0.20*vol + 0.20*regim + 0.18*risk + 0.15*liqu",
-    },
-    "complexity": {
-        "depends": ["entropy", "vol"],
-        "formula": "0.6*entropy + 0.4*vol",
     },
     "sentflow": {
         "depends": ["sentiment", "flow"],

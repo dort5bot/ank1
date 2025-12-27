@@ -34,6 +34,7 @@ NEED_ENDPOINT'den endpointleri belirle:
 9. Composite: ema değerini formülde kullan
 10. Return: trend skorunu döndür
 
+analysis/a_core.py
 core (a_core.py)
  ├─ pipeline / orchestration
  ├─ fetch
@@ -41,11 +42,25 @@ core (a_core.py)
  └─ composite & macro hesaplama
 
 metricresolver
+analysis/metricresolver.py
  ├─ metrik tanımları
  ├─ hangi endpoint?
  ├─ hangi kolon?
  ├─ hangi fonksiyon?
  └─ 🔥 VERİYİ METRİĞE UYARLAMA (ADAPTER’IN İŞİ)
+
+metric dosyaları
+analysis/metrics/
+ ├	advanced.py
+ ├	classical.py
+ ├	microstructure.py
+ ├	onchain.py
+ ├	regime.py
+ ├	risk.py
+ ├	sentiment.py
+ ├	volatility.py
+
+
 
 | Bileşen | Rol                      |
 | ------- | ------------------------ |
@@ -102,7 +117,7 @@ METRICS = {
     "regime": [
         "advance_decline_line", "volume_leadership", "performance_dispersion"
     ],
-    "risk": [
+    "risk": [ #8
         "volatility_risk", "liquidity_depth_risk", "spread_risk", "price_impact_risk",
         "taker_pressure_risk","liquidity_gaps", "open_interest_shock_risk", "open_interest_risk","funding_risk", "funding_stress_risk"
     ]
@@ -110,159 +125,154 @@ METRICS = {
 
 # Basit veri = "key": "endpoint"
 # Derived veri = "key": ["endpoint1", "endpoint2"]
+
 NEED_ENDPOINT = {
-
-    # --- OHLCV (hepsi klines) ---
-    "open":        "klines",
-    "high":        "klines",
-    "low":         "klines",
-    "close":       "klines",
-    "volume":      "klines",
-
-    # Derived OHLCV
-    "hl2":         "klines",       # (high+low)/2
-    "hlc3":        "klines",       # (high+low+close)/3
-    "ohlc4":       "klines",       # (open+high+low+close)/4
-    "returns":     "klines",
+    # --- OHLCV (Basic & Derived) ---
+    # Klines üzerinden hesaplanan temel ve türetilmiş fiyat verileri
+    "open": "klines",
+    "high": "klines",
+    "low": "klines",
+    "close": "klines",
+    "volume": "klines",
+    "quote_volume": "klines",
+    "trades": "klines",
+    "hl2": "klines",
+    "hlc3": "klines",
+    "ohlc4": "klines",
+    "returns": "klines",
     "log_returns": "klines",
+    "volatility_risk": "klines",
 
-    # --- FUNDING ---
-    "funding_rate":     "fundingRate", #premiumIndex
-    "funding_rate_history":     "fundingRate",
+    # --- ORDER BOOK (Depth) ---
+    # Tahta derinliği ve spread tabanlı metrikler
+    "bid": "depth",
+    "ask": "depth",
+    "bid_price": "depth",
+    "bid_size": "depth",
+    "ask_price": "depth",
+    "ask_size": "depth",
+    "depth_levels": "depth",
+    "mid_price": "depth",
+    "spread": "depth",
+    "liquidity_gaps": "depth",
+    "liquidity_depth_risk": "depth",
+    "price_impact_risk": "depth",
+    "spread_risk": "depth",
+    "best_bid": "ticker_book",
+    "best_ask": "ticker_book",
 
-    # Derived funding (birden fazla kaynak)
-    "funding_stress_risk":        ["fundingRate", "klines"],  
-    # fundingRate + price spread (klines)
+    # --- TRADES & MICROSTRUCTURE ---
+    # Anlık işlemler ve emir akışı metrikleri
+    "price": "agg_trades",
+    "qty": "agg_trades",
+    "is_buyer_maker": "agg_trades",
+    "isBuyerMaker": "agg_trades",
+    "taker_buy_volume": "agg_trades",
+    "taker_sell_volume": "agg_trades",
+    "cvd": "agg_trades",
+    "microprice": "agg_trades",
+    "taker_pressure_risk": "agg_trades",
+    "ofi": "depth", # Order Flow Imbalance derinlikten hesaplanır
+
+    # --- MULTI-SOURCE (Kombine Metrikler) ---
+    "microprice_dev": ["agg_trades", "depth"],
+    "microprice_deviation": ["agg_trades", "depth"],
+    "funding_stress_risk": ["fundingRate", "klines"],
+
+    # --- FUNDING & MARKET PRICES ---
+    "funding_rate": "fundingRate",
+    "funding_rate_history": "fundingRate",
+    "funding_risk": "fundingRate",
+    "mark_price": "markPrice",
+    "index_price": "premiumIndex",
+    "funding_premium": "premiumIndex",
 
     # --- OPEN INTEREST ---
-    "open_interest":        "open_interest_hist",
-    "open_interest_change": "open_interest_hist",
+    "open_interest": "open_interest",
+    "open_interest_history": "open_interest_statistics",
+    "open_interest_risk": "open_interest_statistics",
+    "open_interest_shock_risk": ["open_interest_statistics", "top_long_short_ratio"],
 
-    # Derived OI – hem fiyat hem OI gerekir
-    "open_interest_shock_risk":  ["open_interest_hist", "klines"],
-
-
-    # --- DEPTH (order book) ---
-    "bid_price":  "depth",
-    "bid_size":   "depth",
-    "ask_price":  "depth",
-    "ask_size":   "depth",
-
-    # Full depth
-    "depth_levels": "depth",
-
-    # Derived depth metrics
-    "mid_price":      "depth",
-    "spread":         "depth",
-    "liquidity_gaps": "depth",
-    "ofi":            "depth",
-
-
-
-    # --- TRADES / AGGTRADES ---
-    "price":         "agg_trades",
-    "qty":           "agg_trades",
-    "isBuyerMaker":  "agg_trades",
-
-    # Derived
-    "taker_buy_volume":  "agg_trades",
-    "taker_sell_volume": "agg_trades",
-    "cvd":               "agg_trades",
-    "microprice":        "agg_trades",
-
-    # Microprice deviation → trades + orderbook
-    "microprice_dev":    ["agg_trades", "depth"],
-
-
-    # --- SENTIMENT ---
-    "long_short_ratio":     "longShortAccountRatio",
+    # --- SENTIMENT (Long/Short Ratios) ---
+    "long_short_ratio": "longShortAccountRatio",
     "top_long_short_ratio": "topLongShortPositionRatio",
-
-    # Derived from longShortAccountRatio
-    "bull_bear_ratio":      "longShortAccountRatio",
-
+    "bull_bear_ratio": "longShortAccountRatio",
 
     # --- LIQUIDATIONS ---
-    "liquidation_qty":       "forceOrders",
-    "liquidation_side":      "forceOrders",
-
-    # Derived (hem long/short side hem qty)
+    "liquidation_qty": "forceOrders",
+    "liquidation_side": "forceOrders",
     "liquidation_imbalance": "forceOrders",
-
-
-    # --- MARKET DATA ---
-    "mark_price":      "markPrice",
-    "index_price":     "premiumIndex",
-    "funding_premium": "premiumIndex",
-    
-     # --- RISK METRICS (⚠️ ÖNEMLİ) ---
-    "price_impact_risk": "depth",
-    "liquidity_depth_risk": "depth",
 }
 
 ENDPOINT_PARAMS = {
-    # ---- OHLCV ----
+    # Zaman serisi verileri (OHLCV)
     "klines": lambda sym, interval, limit: {
         "symbol": sym,
         "interval": interval,
         "limit": limit
     },
 
-    # ---- OPEN INTEREST ----
-    "open_interest_hist": lambda sym, interval, limit: {
-        "symbol": sym,
-        "period": interval,       # FIXED: interval → period
-        "limit": min(limit, 100)  # Binance 30–100 arası destekler
+    # Anlık OI verisi
+    "open_interest": lambda sym, interval, limit: {
+        "symbol": sym
     },
 
-    # ---- ORDER BOOK DEPTH ----
+    # Tarihsel OI ve İstatistikler (Period formatı dönüşümü ile)
+    "open_interest_statistics": lambda sym, interval, limit: {
+        "symbol": sym,
+        "period": interval.replace("h", "H").replace("m", "min"),
+        "limit": min(limit, 500)
+    },
+
+    # Order Book Parametreleri
     "depth": lambda sym, interval, limit: {
         "symbol": sym,
-        "limit": 100              # interval yok → FIXED
+        "limit": 100
+    },
+    "ticker_book": lambda sym, interval, limit: {
+        "symbol": sym
     },
 
-    # ---- FUNDING ----
+    # Finansman ve Fiyat Verileri
     "fundingRate": lambda sym, interval, limit: {
         "symbol": sym,
         "limit": min(limit, 100)
     },
-
     "premiumIndex": lambda sym, interval, limit: {
         "symbol": sym
     },
+    "markPrice": lambda sym, interval, limit: {
+        "symbol": sym
+    },
 
-    # ---- AGGTRADES ----
+    # İşlem Verileri
     "agg_trades": lambda sym, interval, limit: {
         "symbol": sym,
         "limit": min(limit, 1000)
     },
+    "trades": lambda sym, interval, limit: {
+        "symbol": sym,
+        "limit": min(limit, 1000)
+    },
 
-    # ---- FORCE ORDERS (liquidations) ----
+    # Likidasyonlar
     "forceOrders": lambda sym, interval, limit: {
         "symbol": sym,
         "limit": min(limit, 100)
     },
 
-    # ---- LONG/SHORT RATIO ----
+    # Duyarlılık (Sentiment) Oranları
     "longShortAccountRatio": lambda sym, interval, limit: {
         "symbol": sym,
         "period": interval,
         "limit": min(limit, 500)
     },
-
     "topLongShortPositionRatio": lambda sym, interval, limit: {
         "symbol": sym,
         "period": interval,
         "limit": min(limit, 500)
-    },
-
-    # ---- MARK PRICE ----
-    "markPrice": lambda sym, interval, limit: {
-        "symbol": sym
     }
 }
-
-
 
 # -------------------------------------------------------------
 # 2) Category → Metric hızlı lookup (O(1))
