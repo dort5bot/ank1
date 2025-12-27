@@ -14,6 +14,50 @@ KULLANIM:
 /ts              → Default watchlist sentiment analizi
 
 TÜM KOMUTLAR AYNI MANTIKLA ÇALIŞIR.
+
+TEK - ZORUNLU BLOK (sadece bunlar)
+CORE
+REGF
+VOL_STATE
+STRESS
+
+| Metrik    | Telegram’da anlamı     |
+| --------- | ---------------------- |
+| CORE      | Long / Short bias      |
+| REGF      | Hangi strateji çalışır |
+| VOL_STATE | Pozisyon & stop        |
+| STRESS    | Risk-off alarm         |
+
+AYRI RAPORDA GÖSTERİLMELİ (🧪 filtre / teyit)
+trend
+mom
+vol
+sentp> sntp
+complexity
+
+
+
+ASLA GÖSTERME (🚫 Telegram’da yeri yok)
+Bunlar hesaplanıyor olabilir ama kullanıcıya sunulmamalı
+entropy
+sentiment
+
+| Grup       | Gösterim     |
+| ---------- | ------------ |
+| core       | ✅ Tek rapor  |
+| regf       | ✅ Tek rapor  |
+| vol_state  | ✅ Tek rapor  |
+| stress     | ✅ Tek rapor  |
+| trend      | ➕ Ayrı rapor |
+| mom        | ➕ Ayrı rapor |
+| vol        | ➕ Ayrı rapor |
+| sentp      | ➕ Ayrı rapor |
+| complexity | ➕ Ayrı rapor |
+| entropy    | ❌ Gösterme   |
+| sentiment  | ❌ Gösterme   |
+
+
+
 """
 
 import logging
@@ -29,36 +73,39 @@ router = Router(name="command_router")
 
 # ✅ TÜM KOMUTLAR - SADECE SCORES LİSTESİ
 COMMANDS = {
-    # Ana komutlar
-    "/t": ["trend", "vol", "core"],
+    # tekil Başarılılar
+    # -----------------------------
+    "/tat": ["trend"],
+    "/tam": ["mom"],
+    "/tav": ["vol"], #ağır
+    "/tavs": ["vols"], 
     
-    "/ts": ["sentiment", "flow"],
-    "/tm": ["microstructure", "order", "liqu"],
-    "/ta": ["alphax"],
+    "/tas": ["sntp"],   # DB / süreç ŞART
+    "/taz":["strs"],    # DB / süreç ŞART
+    
+    "/tac": ["core"],
+    "/taf": ["regf"],
+    "/tar": ["risk"],
+    "/tare": ["regim"],
+    "/taen": ["entropy"],
+    "/taam": ["trend","mom","vol"],
+    "/taps": ["trend","mom","vol","regim","entropy","risk"],
+    # -----------------------------
 
-    # Alt komutlar başarılılar ara sonrası başarısız
-    "/tt": ["trend"],
-    "/tvm": ["mom"],
-    "/tv": ["vol"],
-    "/tri": ["risk"],
+
     
-    "/tre": ["regim"],
-    "/ten": ["entropy"],
-    "/tps": ["trend","mom","regim","entropy","vol","risk"],
-      
-    # APİ YOK, eksik veri var, geliştirilmeli
-    "/tse": ["sentiment"],
-    "/tl": ["liqu"],
-    "/tlr": ["liqrisk"],
-    "/tor": ["order"],
-    "/tfl": ["flow"],
+    # Ne yapmalı
+    "/t": ["core","regf","vols"],    #["core","regf","vols","strs"],
     
-    # Özel analizler
-    "/tc": ["complexity", "entropy"],
-    "/ta": ["regim", "advance_decline_line", "volume_leadership"],
-    "/tr": ["risk", "liqrisk"],
-    "/te": ["entropy", "complexity"],
-    "/tcc": ["coreliq", "microstructure"],
+    # Trend netse: Yön,Güç,Katılım (fake mi değil mi)
+    "/tt": ["trend","mom"],  #["trend","mom","sntp"],
+    # Kararsız / yatay piyasa
+    "/tk": ["mom","vol","cpxy"],
+    # Volatil dönem / haber öncesi
+    "/tv": ["vol","vols","cpxy"],    #["vol","vols","sntp","cpxy"],
+    # detay
+    "/tb": ["trend","mom","vol","cpxy"], #"sntp"
+    
 }
 
 class UnifiedCommandHandler:
@@ -407,55 +454,38 @@ def format_table_response(result: Dict[str, Any]) -> str:
 
 
 def get_icon(column: str, score: Optional[float]) -> str:
-    """İkon belirle"""
+    """Unified color-only indicator (no arrows, no extra icons)"""
+
     if score is None or math.isnan(score):
-        return "❌"
-    
-    column_lower = column.lower()
-    
-    # Trend ve pozitif skorlar
-    if "trend" in column_lower or "core" in column_lower:
-        if score > 0.3: return "🟢"
-        elif score > 0.1: return "🟡"
-        elif score > -0.1: return "⚪"
-        elif score > -0.3: return "🟠"
-        else: return "🔴"
-    
-    # Volatilite
-    elif "vol" in column_lower:
-        if abs(score) > 0.4: return "⚡"
-        elif abs(score) > 0.2: return "🔸"
-        else: return "💤"
-    
-    # Risk
-    elif "risk" in column_lower:
-        if score > 0.3: return "🔴"
-        elif score > 0.1: return "🟠"
-        else: return "🟢"
-    
-    # Liquidity
-    elif "liq" in column_lower:
-        if score > 0.2: return "💧"
-        elif score > -0.2: return "💦"
-        else: return "🏜️"
-    
-    # Default
-    elif score > 0.2: return "🔹"
-    elif score > -0.2: return "⚪"
-    else: return "🔸"
+        return "—"
+
+    if score >= 0.35:
+        return "🟢"
+    elif score >= 0.15:
+        return "🟡"
+    elif score > -0.15:
+        return "⚪"
+    elif score > -0.35:
+        return "🟠"
+    else:
+        return "🔴"
+
+
 
 def get_help_text(cmd: str) -> str:
     """Komut için yardım metni"""
-    helps = {
-        "/t": "Trend + Volatility + Core score. Use: /t BTC or /t 5",
-        "/ts": "Sentiment & Flow analysis. Funding rates + ETF flows",
-        "/tm": "Market microstructure: liquidity + order flow",
-        "/tt": "Pure trend analysis (EMA, MACD, RSI)",
-        "/tv": "Volatility metrics (ATR, Historical Vol, GARCH)",
-        "/tr": "Risk assessment (volatility + liquidity risks)",
-        "/tl": "Liquidity depth and density",
-        "/tse": "Pure sentiment (funding rates + OI trend)",
-        "/top": "Top volume coins analysis",
+    helps = {      
+         # Ne yapmalı
+        "/t": Ne yapmalı ["core","regf","vols"],    #["core","regf","vols","strs"],
+        
+        # Trend netse: Yön,Güç,Katılım (fake mi değil mi)
+        "/tt": Yön,Güç,Katılım ["trend","mom"],  #["trend","mom","sntp"],
+        # Kararsız / yatay piyasa
+        "/tk": Kararsız / yatay piyasa varsa["mom","vol","cpxy"],
+        # Volatil dönem / haber öncesi
+        "/tv": olatil dönemde ["vol","vols","cpxy"],    #["vol","vols","sntp","cpxy"],
+        # bilgi - detay
+        "/tb": bilgi ["trend","mom","vol","cpxy"], #"sntp"
     }
     return helps.get(cmd, f"Use: {cmd} [SYMBOL] or {cmd} [NUMBER]")
 
