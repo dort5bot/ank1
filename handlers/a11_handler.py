@@ -472,54 +472,50 @@ def get_icon(column: str, score: Optional[float]) -> str:
 
 
 
+
 def get_help_text(cmd: str) -> str:
     """Komut için yardım metni"""
-    helps = {      
-         # Ne yapmalı
-        "/t": Ne yapmalı ["core","regf","vols"],    #["core","regf","vols","strs"],
-        
-        # Trend netse: Yön,Güç,Katılım (fake mi değil mi)
-        "/tt": Yön,Güç,Katılım ["trend","mom"],  #["trend","mom","sntp"],
-        # Kararsız / yatay piyasa
-        "/tk": Kararsız / yatay piyasa varsa["mom","vol","cpxy"],
-        # Volatil dönem / haber öncesi
-        "/tv": olatil dönemde ["vol","vols","cpxy"],    #["vol","vols","sntp","cpxy"],
-        # bilgi - detay
-        "/tb": bilgi ["trend","mom","vol","cpxy"], #"sntp"
+    helps = {
+        "/t": ("Ne yapmalı", ["core", "regf", "vols"]),
+        "/tt": ("Yön, Güç, Katılım", ["trend", "mom"]),
+        "/tk": ("Kararsız / yatay piyasa varsa", ["mom", "vol", "cpxy"]),
+        "/tv": ("Volatil dönemde", ["vol", "vols", "cpxy"]),
+        "/tb": ("Bilgi / detay", ["trend", "mom", "vol", "cpxy"]),
     }
-    return helps.get(cmd, f"Use: {cmd} [SYMBOL] or {cmd} [NUMBER]")
+
+    if cmd in helps:
+        text, tags = helps[cmd]
+        return f"{text} | Modüller: {', '.join(tags)}"
+
+    return f"Use: {cmd} [SYMBOL] or {cmd} [NUMBER]"
+
 
 # ✅ MESSAGE HANDLER
-@router.message()
+@router.message(lambda msg: msg.text and msg.text.split()[0].lower() in COMMANDS)
 async def handle_all_messages(message: types.Message):
-    """Tüm mesajları işle"""
     text = message.text or ""
     
     if not text.startswith('/'):
         return
     
-    # Loading mesajı
+    # 1. ADIM: Gelen mesajın ilk kelimesini (komutu) al
+    parts = text.split()
+    cmd = parts[0].lower() if parts else ""
+
+    # 2. ADIM: Komut bizim COMMANDS listemizde mi? 
+    # Değilse sessizce çık (böylece /dar gibi komutlara tepki vermez)
+    if cmd not in COMMANDS:
+        return
+    
+    # Loading mesajı (Sadece geçerli bir komutsa gösterilir)
     loading_msg = await message.answer("⏳ Analiz ediliyor...")
     
     try:
         result = await handler.handle(text)
         
+        # result None ise veya hata varsa işleme devam et
         if result is None:
-            await loading_msg.edit_text(
-                "❌ Desteklenmeyen komut.\n\n"
-                "<b>Kullanılabilir komutlar:</b>\n"
-                "/t - Trend + Volatilite + Core\n"
-                "/ts - Sentiment & Flow\n"
-                "/tm - Mikroyapı\n"
-                "/tt - Saf Trend\n"
-                "/tv - Volatilite\n"
-                "/tr - Risk\n"
-                "/tl - Likidite\n"
-                "\n<b>Kullanım:</b>\n"
-                "/t BTC → BTC analizi\n"
-                "/t 5 → Hacimli ilk 5 coin\n"
-                "/t → Default coinler"
-            )
+            await loading_msg.delete() # Veya hata mesajı
             return
             
         if "error" in result:

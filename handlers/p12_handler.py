@@ -29,36 +29,41 @@ from aiogram.enums import ChatAction
 from utils.context_logger import get_context_logger
 from utils.binance_api.binance_a import BinanceAggregator
 
-from config import ScanConfig
+from config import config
 
 import logging
 logger = logging.getLogger(__name__)
 
-
 # ============================================================
-# CONFIGURATION
+# HANDLER KENDİ CONFIG'İ
 # ============================================================
 
-scan_config = ScanConfig()
+# Handler'ın kendi sabit değişkenleri
+SCAN_DEFAULT = 20      # Varsayılan coin sayısı
+SCAN_MAX = 100         # Maksimum coin sayısı
+CACHE_TTL = 60         # 60 saniye cache ömrü
 
-# Core configuration values
-SCAN_SYMBOLS = scan_config.SCAN_SYMBOLS
-SCAN_DEFAULT = scan_config.SCAN_DEFAULT_COUNT
-SCAN_MAX = scan_config.SCAN_MAX_COUNT
-CACHE_TTL = 60  # 60 seconds cache
+# Sembol listesini config'den al
+SCAN_SYMBOLS = config.SCAN_SYMBOLS
+# ============================================================
 
 # Helper function for dynamic symbol loading
 def get_default_symbols(count: int = None) -> List[str]:
     """Get default symbols with optional count limit"""
     if count is None:
         count = SCAN_DEFAULT
-    return scan_config.get_symbols_by_count(min(count, SCAN_MAX))
+    count = min(count, SCAN_MAX)
+    return SCAN_SYMBOLS[:count]
 
 # Pre-loaded default symbols for performance
 DEFAULT_SYMBOLS = get_default_symbols()
 
+# Logger ve Router
 logger = get_context_logger(__name__)
 router = Router(name="price_handler")
+
+
+
 
 # ============================================================
 # OPTIMIZED CACHE SYSTEM
@@ -391,6 +396,41 @@ async def send_coin_list(message: Message, title: str, coins: List[CoinData]):
     else:
         await message.answer(full_message)
 
+"""@router.message(Command("p"))
+async def price_command(message: Message, bot: Bot):
+    user_id = message.from_user.id
+    args = message.text.split()[1:]
+    
+    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+    
+    try:
+        # Sayı kontrolü - /p 12
+        if args and args[0].isdigit():
+            limit = min(int(args[0]), SCAN_MAX)
+            symbols = get_default_symbols(limit)  # ✅ Dinamik sembol yükleme
+            data = await price_handler.get_filtered_tickers(user_id, symbols)
+            title = f"💰 **İlk {len(data)} Coin**"
+            await send_coin_list(message, title, data)
+            
+        # Belirli coin sorgusu - /p btc eth
+        elif args:
+            symbols = [price_handler.normalize_symbol(arg) for arg in args]
+            data = await price_handler.get_filtered_tickers(user_id, symbols)
+            title = f"💰 **Coin Fiyatları** ({len(data)} coin)"
+            await send_coin_list(message, title, data)
+            
+        # Default semboller - /p
+        else:
+            symbols = DEFAULT_SYMBOLS  # ✅ Önceden yüklenmiş semboller
+            data = await price_handler.get_filtered_tickers(user_id, symbols)
+            title = f"💰 **Coin Fiyatları** ({len(data)} coin)"
+            await send_coin_list(message, title, data)
+            
+    except Exception as e:
+        logger.error(f"❌ Error in /p for user {user_id}: {e}")
+        await message.answer("❌ Veri alınırken bir hata oluştu.")
+"""
+
 @router.message(Command("p"))
 async def price_command(message: Message, bot: Bot):
     user_id = message.from_user.id
@@ -424,6 +464,12 @@ async def price_command(message: Message, bot: Bot):
     except Exception as e:
         logger.error(f"❌ Error in /p for user {user_id}: {e}")
         await message.answer("❌ Veri alınırken bir hata oluştu.")
+
+
+
+
+
+
 
 @router.message(Command("pg"))
 async def gainers_command(message: Message, bot: Bot):
@@ -491,9 +537,9 @@ async def volume_command(message: Message, bot: Bot):
         logger.error(f"❌ Error in /pv for user {user_id}: {e}")
         await message.answer("❌ Veri alınırken bir hata oluştu.")
 
-@router.message(Command("debug_config"))
+"""@router.message(Command("debug_config"))
 async def debug_config(message: Message):
-    """Debug config and symbols"""
+
     user_id = message.from_user.id
     
     debug_info = {
@@ -515,6 +561,28 @@ async def debug_config(message: Message):
         debug_info["config_error"] = str(e)
     
     response = "🔧 **Config Debug Info**\n"
+    for key, value in debug_info.items():
+        response += f"{key}: {value}\n"
+    
+    await message.answer(response)
+"""
+
+@router.message(Command("debug_config"))
+async def debug_config(message: Message):
+    """Debug config and symbols"""
+    user_id = message.from_user.id
+    
+    debug_info = {
+        "SCAN_SYMBOLS": SCAN_SYMBOLS[:10],  # İlk 10'u göster
+        "SCAN_DEFAULT": SCAN_DEFAULT,
+        "SCAN_MAX": SCAN_MAX,
+        "all_symbols_count": len(SCAN_SYMBOLS),
+        "handler_scan_default": SCAN_DEFAULT,
+        "handler_scan_max": SCAN_MAX,
+        "cache_ttl": CACHE_TTL
+    }
+    
+    response = "🔧 **Handler Config Debug Info**\n"
     for key, value in debug_info.items():
         response += f"{key}: {value}\n"
     
