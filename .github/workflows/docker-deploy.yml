@@ -5,9 +5,13 @@ name: 🐳 Docker Build & Deploy (Staging → Production)
 #2. Dinamik port ve isimlendirme: Port ve container adı otomatik atanır → çakışma riski yok.
 #3. Staging otomatik, production manuel: Güvenli ve profesyonel CI/CD süreci.
 #4. Üç platform destekli: Oracle, Hetzner, Render.
+  # ORACLE_SSH_KEY, ORACLE_HOST, ORACLE_USER
+  # HETZNER_SSH_KEY, HETZNER_HOST, HETZNER_USER
+  # RENDER_DEPLOY_HOOK
+  # GitHub → Settings → Secrets → Actions
 #5. Dummy pytest: Pipeline’ın sağ
 #6.
-name: 🐳 Docker Build & Deploy (Staging → Production)
+
 
 on:
   push:
