@@ -33,7 +33,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # Proje modülleri
-from config import BotConfig, get_telegram_token, get_admins, get_config
+from config import config, Settings
+
 from utils.handler_loader import HandlerLoader
 from utils.apikey_manager import APIKeyManager, AlarmManager, BaseManager, TradeSettingsManager
 from utils.context_logger import setup_context_logging, get_context_logger, ContextAwareLogger
@@ -49,7 +50,8 @@ from utils.binance_api.binance_exceptions import BinanceAPIError, BinanceAuthent
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
 binance_api: Optional[Union[BinanceAggregator]] = None
-app_config: Optional[BotConfig] = None
+
+
 runner: Optional[web.AppRunner] = None
 shutdown_event = asyncio.Event()
 
@@ -78,10 +80,10 @@ logger = setup_logger()
 # ---------------------------------------------------------------------
 # Bot Factory & Data Structure (main-eski'den)
 # ---------------------------------------------------------------------
-async def create_bot_instance(config: Optional[BotConfig] = None) -> Bot:
+async def create_bot_instance(config: Settings = config) -> Bot:
     """Merkezi bot instance oluşturucu"""
     bot_instance = Bot(
-        token=get_telegram_token(),
+        token=config.TELEGRAM_TOKEN,
         default=DefaultBotProperties(
             parse_mode=ParseMode.HTML,
         )
@@ -232,17 +234,16 @@ class LoggingMiddleware:
             logger.error(f"❌ Error processing update {getattr(event, 'update_id', 'unknown')}: {e}")
             raise
 
+
 class AuthenticationMiddleware:
-    """Middleware for user authentication and authorization."""
-    
     async def __call__(self, handler, event, data):
-        global app_config
         
         user = getattr(event, "from_user", None)
         if user:
             user_id = user.id
             data['user_id'] = user_id
-            data['is_admin'] = app_config.is_admin(user_id) if app_config else False
+            # Düzeltilmiş admin kontrolü:
+            data['is_admin'] = user_id in config.ADMIN_IDS
             logger.debug(f"👤 User {user_id} - Admin: {data['is_admin']}")
         
         return await handler(event, data)
@@ -277,9 +278,8 @@ class DIContainer:
 
 async def initialize_binance_api() -> Optional[Any]:
     """Initialize Binance API with proper factory pattern."""
-    global app_config
     
-    if not app_config.ENABLE_TRADING:
+    if not config.ENABLE_TRADING:
         logger.info("ℹ️ Binance API not initialized (trading disabled)")
         return None
     
@@ -289,7 +289,7 @@ async def initialize_binance_api() -> Optional[Any]:
         # ✅ ÖNCE API Key Manager'ı initialize et
         #from utils.apikey_manager import APIKeyManager
         api_manager = await APIKeyManager.get_instance()
-        await api_manager.ensure_db_initialized()  # ✅ AWAIT EKLE
+        await api_manager.ensure_db_initialized()  
         
         # ✅ SONRA BinanceAggregator'ı başlat
         aggregator = await BinanceAggregator.get_instance()
@@ -304,8 +304,6 @@ async def initialize_binance_api() -> Optional[Any]:
 # ---------------------------------------------------------------------
 # Handler Loading - ENHANCED HANDLER LOADING SYSTEM
 # ---------------------------------------------------------------------
-
-# main.py - DEĞİŞTİRİLMİŞ KISIM
 
 async def load_and_initialize_handlers(dispatcher_instance: Dispatcher) -> Dict[str, int]:
     """Handler'ları yükle ve initialize et - handler_loader'ı kullan"""
@@ -387,9 +385,16 @@ async def reset_webhook(bot_instance: Bot):
 
 async def on_startup(bot: Bot) -> None:
     """Minimal startup - webhook bash script tarafından yönetiliyor"""
-    global app_config, logger
+
     
     try:
+        # ✅ Config kontrolü
+        if not config:
+            logger.error("❌ Config instance not found!")
+            return
+            
+        
+        
         # ✅ Logger kontrolü
         if logger is None:
             setup_logger()
@@ -399,14 +404,21 @@ async def on_startup(bot: Bot) -> None:
         bot_name = bot_info.username
         bot_first_name = bot_info.first_name
         
-        # .env'den TELEGRAM_NAME al veya bot info'dan kullan
-        env_bot_name = os.environ.get('TELEGRAM_NAME', '')
-        display_name = env_bot_name if env_bot_name else f"{bot_first_name} (@{bot_name})"
+        # ✅ Bot adını config'ten al
+        display_name = config.TELEGRAM_NAME
         
         logger.info(f"🤖 BOT BAŞLATILDI: {display_name}")
         logger.info(f"   ├─ Username: @{bot_name}")
         logger.info(f"   ├─ First Name: {bot_first_name}")
         logger.info(f"   └─ ID: {bot_info.id}")
+        
+         # ✅ BOT_MODE'u logla
+        logger.info(f"🚀 Bot Mode: {config.BOT_MODE}")
+        logger.info(f"🌐 Environment: {config.ENV}")
+        
+        # ✅ Admin ID'lerini logla (güvenli şekilde)
+        admin_count = len(config.ADMIN_IDS) if config.ADMIN_IDS else 0
+        logger.info(f"👑 Admin Count: {admin_count}")
         
         # ✅ SADECE handler yükleme ve basit kontrol
         logger.info("🔄 Starting bot with external webhook management...")
@@ -443,7 +455,7 @@ async def on_shutdown(bot: Bot) -> None:
     
     try:
         # Delete webhook
-        if app_config and app_config.WEBHOOK_HOST:
+        if config.BOT_MODE == "webhook":
             try:
                 await bot.delete_webhook()
                 logger.info("✅ Webhook deleted")
@@ -636,10 +648,10 @@ async def detailed_health_check(request: web.Request) -> web.Response:
 
 async def readiness_check(request: web.Request) -> web.Response:
     """Readiness check for Kubernetes and load balancers."""
-    global bot, binance_api, app_config
+    global bot, binance_api
     
-    if bot and app_config:
-        if app_config.ENABLE_TRADING and not binance_api:
+    if bot and config:
+        if config.ENABLE_TRADING and not binance_api:
             return web.json_response({"status": "not_ready"}, status=503)
         
         essential_services = ['bot', 'dispatcher', 'config']
@@ -660,7 +672,7 @@ async def readiness_check(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------
 async def check_services() -> Dict[str, Any]:
     """Check connectivity to all external services."""
-    global bot, binance_api, app_config
+    global bot, binance_api
     
     services_status = {}
     
@@ -683,7 +695,7 @@ async def check_services() -> Dict[str, Any]:
         }
     
     # Check Binance API
-    if app_config.ENABLE_TRADING:
+    if config.ENABLE_TRADING:
         try:
             if binance_api:
                 ping_result = await binance_api.ping()
@@ -710,72 +722,15 @@ async def check_services() -> Dict[str, Any]:
 
 # ---------------------------------------------------------------------
 # LIFESPAN MANAGEMENT - sadeleştir - tekrar olmasın
-"""
 @asynccontextmanager
-async def lifespan(config: BotConfig):
-    #Basitleştirilmiş lifespan - TÜM initialization burada
-    global bot, dispatcher, binance_api, app_config
-    
-    try:
-        app_config = config
-        
-        # ✅ # ✅ ✅ ✅ CRITICAL: MANAGER'LARI EN BAŞTA BAŞLAT
-        if not await initialize_managers():
-            raise RuntimeError("Manager initialization failed")
-        
-        
-        # ✅ 1-PERFORMANCE MONITORING
-        ContextAwareLogger.add_context('lifecycle_phase', 'bot_initialization')
-        
-        # ✅ 2-CRITICAL: Tüm bileşenleri sırayla başlat
-        bot = await create_bot_instance(config=app_config)
-        dispatcher = Dispatcher()
-        
-        # ✅ 3-Error handler & middleware
-        dispatcher.errors.register(error_handler)
-        dispatcher.update.outer_middleware(LoggingMiddleware())
-        dispatcher.update.outer_middleware(AuthenticationMiddleware())
-        
-        # ✅ 4-DI Container
-        DIContainer.register('bot', bot)
-        DIContainer.register('dispatcher', dispatcher)
-        DIContainer.register('config', app_config)
-        
-        # ✅ 5-Binance API (sadece trading enabled ise)
-        binance_api = await initialize_binance_api()
-        if binance_api:
-            bot.data["binance_api"] = binance_api
-            DIContainer.register('binance_api', binance_api)
-        
-        # ✅ 5-HANDLER'ları YÜKLE
-        logger.info("🔄 Loading handlers...")
-        load_results = await load_and_initialize_handlers(dispatcher)  # ← DEĞİŞTİRİLDİ
-        logger.info(f"📊 Handler loading results: {load_results}")
-        
-        # ✅ 6- STARTUP KONTROLÜ (YENİ & DOĞRU fonksiyonla)
-        startup_ok = await startup_sequence(dispatcher)
-        if not startup_ok:
-            raise RuntimeError("Startup sequence failed")
-        
-        logger.info("✅ All components initialized successfully")
-        yield
-        
-    except Exception as e:
-        logger.error(f"❌ Bot initialization error: {e}")
-        raise
-    finally:
-        ContextAwareLogger.remove_context('lifecycle_phase')
-"""
-
-@asynccontextmanager
-async def lifespan(config: BotConfig):
+async def lifespan(config: Settings = config):
     """Basitleştirilmiş lifespan - TÜM initialization burada"""
     print("DEBUG: lifespan started")
     
-    global bot, dispatcher, binance_api, app_config
+    global bot, dispatcher, binance_api
     
     try:
-        app_config = config
+    
         print("DEBUG: Config set")
 
         # ✅ MANAGER'LARI BAŞLAT
@@ -786,9 +741,17 @@ async def lifespan(config: BotConfig):
 
         # ✅ BOT VE DİSPATCHER
         print("DEBUG: Creating bot instance...")
-        bot = await create_bot_instance(config=app_config)
+        bot = await create_bot_instance(config)
         dispatcher = Dispatcher()
         print("DEBUG: Bot and dispatcher created")
+        
+         # ✅ BINANCE API INITIALIZE
+        print("DEBUG: Initializing Binance API...")
+        binance_api = await initialize_binance_api()
+        if binance_api:
+            bot.data['binance_api'] = binance_api
+            logger.info("✅ Binance API initialized and attached to bot")
+            
 
         # ✅ ERROR HANDLER & MIDDLEWARE
         print("DEBUG: Setting up error handler and middleware...")
@@ -819,6 +782,7 @@ async def lifespan(config: BotConfig):
         raise
     finally:
         print("DEBUG: Lifespan cleanup")
+        pass
 
 
 # ---------------------------------------------------------------------
@@ -905,113 +869,43 @@ async def start_periodic_cleanup():
     except Exception as e:
         logger.error(f"❌ Periodic cleanup error: {e}")
 
-
-
-
-# ---------------------------------------------------------------------
-# ÇALIŞMA MODU KONFİGÜRASYONU
-# ---------------------------------------------------------------------
-def get_bot_mode() -> str:
-    #Bot çalışma modunu belirle
-    # Oracle ortamında webhook, local'de polling
-    if any(env_var in os.environ for env_var in ['ORACLE', 'OCI_', 'OPC_']):
-        return "webhook"
-    elif os.environ.get('USE_WEBHOOK', '').lower() in ['true', '1', 'yes']:
-        return "webhook"
-    else:
-        return "polling"
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------
 # OPTIMIZED MAIN ENTRY POINT - CONFIG TABANLI
 # ---------------------------------------------------------------------
-"""
-async def app_entry():
-    #Config tabanlı çift modlu main entry
-    global app_config, runner, bot, dispatcher
-    
-    try:
-        # ✅ Config yükle
-        logger.info("📋 Loading configuration...")
-        app_config = await get_config()
-        
-        # ✅ Config'ten modu oku
-        bot_mode = "webhook" if app_config.USE_WEBHOOK else "polling"
-        logger.info(f"🚀 Starting bot in {bot_mode.upper()} mode (from config)...")
-        logger.info("🤖 Bot polling modunda başlatılıyor-elma...")
-        #await dispatcher.start_polling(bot)
-        
-        # ✅ Lifespan ile bileşenleri başlat
-        async with lifespan(app_config):
-            
-            if app_config.USE_WEBHOOK:
-                # ✅ WEBHOOK MODU
-                app = await create_app()
-                runner = web.AppRunner(app)
-                await runner.setup()
-                site = web.TCPSite(runner, host=app_config.WEBAPP_HOST, port=app_config.WEBAPP_PORT)
-                await site.start()
-                logger.info(f"✅ Webhook server started on port {app_config.WEBAPP_PORT}")
-                
-                # ✅ Bekle
-                await shutdown_event.wait()
-                
-            else:
-                # ✅ POLLING MODU - WEBHOOK TEMİZLİĞİ EKLENDİ
-                logger.info("🔄 Starting long polling with webhook cleanup...")
-                
-                # CRITICAL: Webhook'u temizle
-                try:
-                    await bot.delete_webhook(drop_pending_updates=True)
-                    logger.info("✅ Webhook cleared successfully")
-                    await asyncio.sleep(2)  # Telegram'ın işlemesi için bekle
-                except Exception as e:
-                    logger.warning(f"⚠️ Webhook cleanup warning: {e}")
-                
-                await dispatcher.start_polling(bot)
-                
-    except Exception as e:
-        logger.critical(f"💥 Fatal error: {e}")
-        raise
-    finally:
-        await cleanup_resources()
-"""
-     
+
 async def app_entry():
     """Config tabanlı çift modlu main entry"""
     print("DEBUG: app_entry started")
     
-    global app_config, runner, bot, dispatcher
+    global runner, bot, dispatcher
     
     try:
-        # ✅ Config yükle
-        print("DEBUG: Loading configuration...")
-        app_config = await get_config()
-        print(f"DEBUG: Config loaded - USE_WEBHOOK: {app_config.USE_WEBHOOK}")
+        # ✅ Config zaten import edildi, direk kullan
+        print("DEBUG: Configuration loaded from config.py")
         
-        # ✅ Config'ten modu oku
-        bot_mode = "webhook" if app_config.USE_WEBHOOK else "polling"
+        # ✅ Config'ten modu oku (BOT_MODE computed property'yi kullan)
+        bot_mode = config.BOT_MODE  # Direkt config.BOT_MODE kullan
         print(f"DEBUG: Starting in {bot_mode} mode")
         
         # ✅ Lifespan ile bileşenleri başlat
         print("DEBUG: Starting lifespan...")
-        async with lifespan(app_config):
+        async with lifespan(config):  # config instance'ını geç
             print("DEBUG: Lifespan completed successfully")
-            
-            if app_config.USE_WEBHOOK:
-                # ✅ WEBHOOK MODU
-                print("DEBUG: Webhook mode - creating app...")
-                app = await create_app()
-                runner = web.AppRunner(app)
-                await runner.setup()
-                site = web.TCPSite(runner, host=app_config.WEBAPP_HOST, port=app_config.WEBAPP_PORT)
-                await site.start()
-                print(f"DEBUG: Webhook server started on port {app_config.WEBAPP_PORT}")
+
+            if bot_mode == "webhook":
+                # ✅ WEBHOOK_URL kontrolü ekle
+                if not config.WEBHOOK_URL:
+                    logger.error("❌ WEBHOOK_MODE aktif ama WEBHOOK_URL boş!")
+                    logger.error(f"   WEBHOOK_HOST: {config.WEBHOOK_HOST}")
+                    logger.error(f"   TELEGRAM_TOKEN: {'***' + config.TELEGRAM_TOKEN[-4:] if config.TELEGRAM_TOKEN else 'MISSING'}")
+                    raise RuntimeError("Webhook URL configuration missing")
+                
+                app = await create_app()  # ✅ Artık çalışacak 
+                        
+                        
+                # ✅ WEBHOOK URL bilgisini logla
+                if config.WEBHOOK_URL:
+                    print(f"DEBUG: Webhook URL: {config.WEBHOOK_URL}")
                 
                 # ✅ Bekle
                 print("DEBUG: Waiting for shutdown...")
@@ -1042,43 +936,39 @@ async def app_entry():
         await cleanup_resources()
 
 
-
 async def create_app() -> web.Application:
-    """Ana app creator - lifespan BURADA"""
-    global bot, dispatcher, app_config
+    """Ana app creator"""
+    global bot, dispatcher
     
-    # 
-    #sil25
-    app = web.Application()
+    if config.BOT_MODE != "webhook":
+        raise RuntimeError("create_app() should only be called in webhook mode")
     
-    # Route'ları önce ekle
+    app = web.Application()  # ✅ Bu satır çalışacak
+    
+    # Route'ları ekle
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
     app.router.add_get("/ready", readiness_check)
     
-    # ✅ SONRA lifespan ile initialization
-    async with lifespan(app_config):
-        
-        # Webhook setup
-        # ✅ WEBHOOK  - token parametresini KALDIR
-        if app_config.WEBHOOK_HOST:
-            webhook_handler = SimpleRequestHandler(
-                dispatcher=dispatcher,
-                bot=bot,
-                secret_token=getattr(app_config, "WEBHOOK_SECRET", None)
-            )
-            # SADECE "/webhook" path'ini kullan
-            webhook_handler.register(app, path="/webhook")
-        
-        # Hooks
-        app.on_startup.append(lambda app: on_startup(bot))
-        app.on_shutdown.append(lambda app: on_shutdown(bot))
-        
-        # Aiogram setup
-        setup_application(app, dispatcher, bot=bot)
-        
-        return app
+    # Webhook setup
+    if config.WEBHOOK_URL:  # ✅ config.WEBHOOK_URL computed property'yi kullan
+        webhook_handler = SimpleRequestHandler(
+            dispatcher=dispatcher,
+            bot=bot,
+            secret_token=config.WEBHOOK_SECRET if config.WEBHOOK_SECRET else None
+        )
+        webhook_handler.register(app, path=f"/webhook/{config.TELEGRAM_TOKEN}")
+        logger.info(f"✅ Webhook registered at /webhook/{config.TELEGRAM_TOKEN}")
     
+    # Hooks
+    app.on_startup.append(lambda app: on_startup(bot))
+    app.on_shutdown.append(lambda app: on_shutdown(bot))
+    
+    # Aiogram setup
+    setup_application(app, dispatcher, bot=bot)
+    
+    return app
+
 # ---------------------------------------------------------------------
 # POLLING MODU İÇİN SHUTDOWN DESTEĞİ
 # ---------------------------------------------------------------------
@@ -1089,6 +979,7 @@ async def stop_polling():
         await dispatcher.stop_polling()
         logger.info("✅ Polling stopped")
 
+
 # Signal handler
 def handle_shutdown(signum, frame) -> None:
     """Handle shutdown signals gracefully."""
@@ -1097,13 +988,12 @@ def handle_shutdown(signum, frame) -> None:
         loop = asyncio.get_event_loop()
         loop.call_soon_threadsafe(shutdown_event.set)
         
-        # Polling modu için ek
-        if get_bot_mode() == "polling":
+        # Polling modu için ek - config.BOT_MODE kullan
+        if config.BOT_MODE == "polling":
             asyncio.create_task(stop_polling())
             
     except Exception:
-        shutdown_event.set()
-        
+        shutdown_event.set()       
         
 signal.signal(signal.SIGTERM, handle_shutdown)
 signal.signal(signal.SIGINT, handle_shutdown)
@@ -1121,7 +1011,7 @@ async def notify_admins_about_critical_error(error: Exception) -> None:
         
     message = f"🚨 Kritik Hata: {type(error).__name__}: {str(error)}"
     
-    for admin_id in get_admins():
+    for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(admin_id, message)
         except Exception as e:
@@ -1136,14 +1026,6 @@ async def secure_delete_message(bot: Bot, chat_id: int, message_id: int) -> None
         logger.debug(f"✅ Message {message_id} securely deleted")
     except Exception as e:
         logger.warning(f"⚠️ Could not delete message {message_id}: {e}")
-
-
-
-
-# oracle
-#def is_oracle_environment() -> bool:
-#    """Oracle Cloud environment detection"""
-#    return any(env_var in os.environ for env_var in ['ORACLE', 'OCI_', 'OPC_'])
 
 # .db temizlik
 async def execute_critical_db_operation(operation_func, *args, **kwargs):
@@ -1218,25 +1100,9 @@ async def register_user_complete(self, user_id: int, user_data: dict) -> bool:
         logger.error(f"❌ User registration failed for {user_id}: {e}")
         return False
   
-"""  
-# ---------------------------------------------------------------------
-# MAIN EXECUTION
-# ---------------------------------------------------------------------
-if __name__ == "__main__":
-    try:
-        asyncio.run(app_entry())
-    except KeyboardInterrupt:
-        logger.info("👋 Application terminated by user")
-    except Exception as e:
-        logger.critical(f"💥 Fatal error: {e}")
-        exit(1)
-"""
 
 # ---------------------------------------------------------------------
 # MAIN EXECUTION - FIXED VERSION
-# ---------------------------------------------------------------------
-# ---------------------------------------------------------------------
-# MAIN EXECUTION - FIXED VERSION (NO EMOJI)
 # ---------------------------------------------------------------------
 
 async def main_async():
@@ -1252,13 +1118,13 @@ async def main_async():
         raise
 
 def main():
-    """Main entry point with Windows fix - NO EMOJI"""
+    """Ana başlatma fonksiyonu"""
     try:
         # Windows asyncio FIX
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         
-        print("Starting bot with Windows asyncio fix...")
+        print("Starting bot...")
         asyncio.run(main_async())
         
     except KeyboardInterrupt:
@@ -1267,7 +1133,8 @@ def main():
         print(f"Critical error in main: {e}")
         import traceback
         traceback.print_exc()
-        input("Press Enter to exit...")
+        if sys.platform == 'win32':
+            input("Press Enter to exit...")
 
 if __name__ == "__main__":
     main()
