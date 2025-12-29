@@ -1,55 +1,69 @@
-# utils/binance_api/bi_config.py class BinanceConfig
 from __future__ import annotations
+
 import os
-from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
-from pathlib import Path
 
-@dataclass
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except ValueError:
+        return default
+
+
+@dataclass(slots=True)
 class BinanceConfig:
-    """Centralized configuration management"""
-    base_path: str = field(default_factory=lambda: os.getenv("BINANCE_MAPS_PATH", ""))
-    api_timeout: int = field(default_factory=lambda: int(os.getenv("BINANCE_API_TIMEOUT", "30")))
-    max_retries: int = field(default_factory=lambda: int(os.getenv("BINANCE_MAX_RETRIES", "3")))
-    cache_ttl: int = field(default_factory=lambda: int(os.getenv("BINANCE_CACHE_TTL", "300")))
-    cleanup_interval: int = field(default_factory=lambda: int(os.getenv("BINANCE_CLEANUP_INTERVAL", "300")))
-    
-    def __post_init__(self):
-        """Post-initialization validation"""
-        if not self.base_path:
-            self.base_path = self._discover_maps_path()
-        
-        self._validate_path()
+    """
+    Production-ready Binance runtime configuration.
 
-    def _discover_maps_path(self) -> str:
-        """Automatically discover maps directory"""
-        possible_paths = [
-            # Docker container path
-            "/app/binance_maps",
-            # Local development
-            Path(__file__).parent.parent.parent / "binance_maps",
-            # Python package path
-            Path(__file__).parent / "maps",
-            # Current directory
-            Path.cwd() / "binance_maps"
-        ]
-        
-        for path in possible_paths:
-            path_str = str(path)
-            if Path(path_str).exists():
-                return path_str
-        
-        # Create default directory
-        default_path = Path.cwd() / "binance_maps"
-        default_path.mkdir(exist_ok=True)
-        return str(default_path)
+    - Stateless
+    - Filesystem bağımsız
+    - Container / serverless uyumlu
+    """
 
-    def _validate_path(self):
-        """Validate base path exists"""
-        if not Path(self.base_path).exists():
-            raise ValueError(f"Maps directory not found: {self.base_path}")
+    # ⏱ HTTP & Network
+    api_timeout: int = field(default_factory=lambda: _env_int("BINANCE_API_TIMEOUT", 30))
+    max_retries: int = field(default_factory=lambda: _env_int("BINANCE_MAX_RETRIES", 3))
+
+    # 🧠 Cache & Performance
+    cache_ttl: int = field(default_factory=lambda: _env_int("BINANCE_CACHE_TTL", 300))
+
+    # 🧹 Background cleanup
+    cleanup_interval: int = field(default_factory=lambda: _env_int("BINANCE_CLEANUP_INTERVAL", 300))
+
+    # 🔐 Security / Limits
+    max_concurrent_requests: int = field(
+        default_factory=lambda: _env_int("BINANCE_MAX_CONCURRENT_REQUESTS", 10)
+    )
+
+    # 🧪 Debug / Diagnostics
+    debug: bool = field(
+        default_factory=lambda: os.getenv("BINANCE_DEBUG", "false").lower() == "true"
+    )
+
+    def __post_init__(self) -> None:
+        self._validate()
+
+    def _validate(self) -> None:
+        if self.api_timeout <= 0:
+            raise ValueError("api_timeout must be > 0")
+
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+
+        if self.cache_ttl < 0:
+            raise ValueError("cache_ttl must be >= 0")
+
+        if self.cleanup_interval <= 0:
+            raise ValueError("cleanup_interval must be > 0")
+
+        if self.max_concurrent_requests <= 0:
+            raise ValueError("max_concurrent_requests must be > 0")
 
     @classmethod
-    def from_env(cls) -> BinanceConfig:
-        """Create config from environment variables"""
+    def from_env(cls) -> "BinanceConfig":
+        """
+        Explicit factory method.
+        (İleride config source değişirse tek yerden kontrol edilir)
+        """
         return cls()
