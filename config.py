@@ -1,3 +1,4 @@
+# config.py
 import os
 import logging
 import sys
@@ -8,6 +9,7 @@ from functools import lru_cache
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from cryptography.fernet import Fernet
 
 # .env dosyasını yükle
@@ -96,7 +98,7 @@ class Settings(BaseSettings):
         "PEPEUSDT", "FETUSDT", "TURBOUSDT", "SUIUSDT"
     ])
     # SİL: Diğer handler'lar için gerekebilecek ayarlar KULLANILMIYORSA
-    SCAN_DEFAULT_COUNT: int = 20
+    SCAN_DEFAULT_COUNT: int = 50
     MAX_LEVERAGE: int = 3
     
     # --- REDIS (AIOGRAM FSM) ---
