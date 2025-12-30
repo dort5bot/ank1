@@ -7,7 +7,7 @@ KULLANIM:
 /t 5         → Hacimli ilk 5 coin
 /t BTC       → Sadece BTC
 /t BTC ETH   → BTC ve ETH
-/t 10 SOL    → Hacimli 10 coin + SOL
+belki eklenecek /t 10 SOL    → Hacimli 10 coin + SOL
 
 /ts BTC          → BTCUSDT için sentiment analizi
 /ts 5            → Hacimli ilk 5 coin sentiment analizi
@@ -529,3 +529,4 @@ async def handle_all_messages(message: types.Message):
         logger.error(f"Handler error: {e}", exc_info=True)
 
         await loading_msg.edit_text(f"❌ <b>Sistem hatası:</b> {str(e)}")
+
