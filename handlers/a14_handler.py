@@ -1,4 +1,4 @@
-# handlers/a7_handler.py - REVIZE EDILMIS VERSIYON
+# handlers/a14_handler.py - REVIZE EDILMIS VERSIYON
 """
 OPTIMIZED COMMAND HANDLER - TÜM KOMUTLAR İÇİN ORTAK MANTIK
 
@@ -527,4 +527,5 @@ async def handle_all_messages(message: types.Message):
         
     except Exception as e:
         logger.error(f"Handler error: {e}", exc_info=True)
+
         await loading_msg.edit_text(f"❌ <b>Sistem hatası:</b> {str(e)}")
