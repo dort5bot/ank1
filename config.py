@@ -74,7 +74,14 @@ class Settings(BaseSettings):
 
     # --- ENCRYPTION & SECURITY ---
     MASTER_KEY: str = Field(default="")
-    DATABASE_URL: str = "data/apikeys.db"
+    
+    # DATABASE_URL: str = "data/apikeys.db"
+    RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", "/tmp/zbot1"))
+    DATABASE_URL: str = str(RUNTIME_DIR / "data" / "apikeys.db")
+
+
+
+
 
     @field_validator("MASTER_KEY", mode="before")
     @classmethod
