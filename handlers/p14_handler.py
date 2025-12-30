@@ -1,7 +1,7 @@
 """
-handlers/p22_handler.py
-Price Handler for Binance - Optimized Multi-user Crypto Price Tracker
-🔄 Multi-user support with user-specific caching
+handlers/p14_handler.py
+Price Handler for Binance - Optimized MultiUser Crypto Price Tracker
+🔄 MultiUser support with user-specific caching
 ⚡ Ultra-fast with orjson, heapq, regex precompilation
 💡 Smart fallback system (Aggregator → HTTP)
 🕒 TTL cache with automatic cleanup
@@ -70,7 +70,7 @@ router = Router(name="price_handler")
 # ============================================================
 
 class MultiUserCache:
-    """Multi-user TTL cache with automatic cleanup"""
+    """MultiUser TTL cache with automatic cleanup"""
     
     def __init__(self, ttl: int = 60):
         self.ttl = ttl
@@ -163,7 +163,7 @@ class CoinData:
 # ============================================================
 
 class PriceHandler:
-    """Multi-user Binance price handler with fallback support"""
+    """MultiUser Binance price handler with fallback support"""
     
     def __init__(self):
         self.binance = None
