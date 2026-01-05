@@ -2,10 +2,8 @@
 # zorunlu olarak seçmeli polling + webhook
 """
 # Local development (polling)
-USE_WEBHOOK=false python main.py
-
-# Production (webhook)  
-USE_WEBHOOK=true python main.py
+USE_WEBHOOK= buna gerek yok, otomotik yapıyor
+WEBHOOK_HOST var/ yok ile yapıyor
 """
 
 # main.py - İYİLEŞTİRİLMİŞ IMPORT
@@ -23,7 +21,7 @@ from contextlib import asynccontextmanager
 import aiohttp
 from datetime import datetime
 from aiohttp import web
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # artık şart değil silinebilir
 
 # Aiogram
 from aiogram import Bot, Dispatcher, Router
@@ -59,13 +57,24 @@ shutdown_event = asyncio.Event()
 # ✅ LOGGER
 logger: Optional[logging.Logger] = None
 
-# Configure logging
+# .env yükle
 load_dotenv()
+
+# ---- ENV BASED LOG / PRINT CONTROL ----
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
+if not DEBUG:
+    import builtins
+    builtins.print = lambda *args, **kwargs: None
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S"
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,  
 )
+
 
 def setup_logger():
     """Logger'ı global olarak setup et"""

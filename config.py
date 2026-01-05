@@ -6,20 +6,21 @@ from enum import Enum
 from typing import List, Optional, Any, Dict, ClassVar
 from pathlib import Path
 from functools import lru_cache
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from pydantic import Field, field_validator, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from cryptography.fernet import Fernet
 
-# .env dosyasını yükle
-load_dotenv()
+# .env dosyasını yükleme vb main içinde tek merkez
+# load_dotenv()
 
 # Logger Kurulumu
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# logging.basicConfig(
+    # level=os.getenv("LOG_LEVEL", "INFO"),
+    # format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# )
+
 logger = logging.getLogger("BotConfig")
 
 class Environment(str, Enum):
@@ -57,14 +58,20 @@ class Settings(BaseSettings):
     WEBHOOK_HOST: Optional[str] = None
     WEBHOOK_SECRET: str = ""
     
+
+    # BOT_MODE
+    # Render veya Oracle gibi platformlarda otomatik olarak webhook moduna geçer.
+    
+    
     @computed_field
     @property
     def BOT_MODE(self) -> str:
-        """Render veya Oracle gibi platformlarda otomatik olarak webhook moduna geçer."""
-        platforms = ['RENDER', 'RAILWAY', 'HEROKU', 'ORACLE_CLOUD', 'DIGITALOCEAN']
-        if any(env in os.environ for env in platforms) or self.WEBHOOK_HOST:
+        if self.WEBHOOK_HOST:
+            return "webhook"
+        if os.getenv("PORT"):
             return "webhook"
         return "polling"
+
 
     @computed_field
     @property
@@ -104,8 +111,12 @@ class Settings(BaseSettings):
         return v
 
 
-    # market_collector  için zamanlayıcı
-    COLLECT_INTERVAL_SECONDS: int = 600 # 10 dk
+    # market_collector  için zamanlayıcı 10 dk
+    COLLECT_INTERVAL_SECONDS: int = Field(
+        default=600,
+        description="Market collector çalışma aralığı (saniye)"
+    )
+
 
 
     # --- SCAN & TRADING PARAMS ---
