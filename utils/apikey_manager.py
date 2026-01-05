@@ -1,6 +1,10 @@
 # utils/apikey_manager.py
 # v1011
 # utils/apikey_manager.py
+r"""
+Tüm manager tamamen async yapıda
+Sadece CPU-bound ve tek seferlik işlemler sync
+"""
 import os
 import asyncio
 import json
@@ -19,7 +23,8 @@ from cryptography.exceptions import InvalidKey
 from binance import AsyncClient
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
-from config import get_apikey_config
+from config import config
+
 
 UserID: TypeAlias = int  # UserID tip tanımı
 GLOBAL_USER: int = 0     # Global kullanıcı sabiti
@@ -34,9 +39,7 @@ class APITier(Enum):
     PRIVATE = "private" 
     SYSTEM = "system"
 
-
 # ✅ ÖZEL HATA SINIFLARI
-
 class APIKeyValidationError(Exception):
     """API key validation failed"""
     pass
@@ -67,17 +70,16 @@ class BaseManager:
     _instance = None
 
     def __init__(self):
-        config = get_apikey_config()
+        cfg = config
         
         if not BaseManager._db_path:
-            BaseManager._db_path = config.DATABASE_URL or "data/apikeys.db"
+            BaseManager._db_path = cfg.DATABASE_URL or "data/apikeys.db"
 
         if not BaseManager._fernet:
-            BaseManager._fernet = self._initialize_encryption(config)
+            BaseManager._fernet = self._initialize_encryption(cfg)
         
         # ✅ CONFIG'TEN GÜVENLİK AYARLARINI AL
-        self._secure_permissions = getattr(config, 'SECURE_DB_PERMISSIONS', True)
-        self._db_init_retries = getattr(config, 'DB_INIT_RETRY_ATTEMPTS', 3)
+        self._secure_permissions = getattr(cfg, 'SECURE_DB_PERMISSIONS', True)
         self._db_timeout = getattr(config, 'DB_CONNECTION_TIMEOUT', 30)
 
     #tablo başlıkları
@@ -350,7 +352,6 @@ class BaseManager:
         return cls._db_connections[db_path]
         
 
-
 # ============================================================
 # API KEY MANAGER
 # ============================================================
@@ -364,29 +365,31 @@ class UserCredentials:
     is_valid: bool = False
 
 
-
 class APIKeyManager(BaseManager):
     _instance: Optional["APIKeyManager"] = None
+    _initialized: bool = False  # ✅ Initialization flag ekle 25/10
     _validation_lock: asyncio.Lock = asyncio.Lock()
     _cache: Dict[int, Tuple[str, str]] = {}
     _cache_lock: asyncio.Lock = asyncio.Lock()
 
     def __init__(self):
         super().__init__()
+        # Trading flag
+        self.enable_trading: bool = getattr(config, "ENABLE_TRADING", False)
     
- 
-    """
-    main içine taşındı
-    # apikey_manager.py'ye ekle (APIKeyManager içine):
-    async def register_user_complete(self, user_id: int, user_data: dict) -> bool:
-    """        
-
 
     @classmethod
-    def get_instance(cls) -> "APIKeyManager":
+    async def get_instance(cls) -> "APIKeyManager":
         if cls._instance is None:
-            cls._instance = APIKeyManager()
+            cls._instance = cls()
+            await cls._instance._async_init()  # ✅ Async initialization
         return cls._instance
+
+    async def _async_init(self):
+        if not self._initialized:
+            await self.ensure_db_initialized()
+            self._initialized = True
+            
 
     # APIKeyManager sınıfına özel cleanup:
     async def cleanup(self) -> None:
@@ -395,11 +398,9 @@ class APIKeyManager(BaseManager):
             self._cache.clear()
         logger.info("✅ APIKeyManager cache cleared")
 
-
-
 # ---Global API Key .env içeriğine göre -----
 
-    async def get_global_apikey(self) -> Optional[Tuple[str, str]]:
+    """async def get_global_apikey(self) -> Optional[Tuple[str, str]]:
         try:
             api_key = os.getenv("BINANCE_API_KEY")
             secret_key = os.getenv("BINANCE_API_SECRET")
@@ -429,8 +430,46 @@ class APIKeyManager(BaseManager):
                 "error": str(e)
             })
             return None
-            
+   """         
+    
 
+    async def get_global_apikey(self) -> Optional[Tuple[str, str]]:
+        if not getattr(self, "enable_trading", False):
+            logger.info("Trading is disabled - global API key not returned")
+            return None
+
+        try:
+            api_key = os.getenv("BINANCE_API_KEY")
+            secret_key = os.getenv("BINANCE_API_SECRET")
+            
+            if api_key and secret_key:
+                if len(api_key) >= 16 and len(secret_key) >= 32:
+                    logger.info("Global API credentials retrieved", extra={
+                        "user_id": 0,  # Global user
+                        "source": "environment",
+                        "tier": "system"
+                    })
+                    return api_key, secret_key
+            
+            logger.warning("Global API credentials not found or invalid", extra={
+                "user_id": 0,
+                "source": "environment",
+                "tier": "system",
+                "api_key_length": len(api_key) if api_key else 0,
+                "secret_key_length": len(secret_key) if secret_key else 0
+            })
+            return None
+        except Exception as e:
+            logger.error("Failed to get global API keys", extra={
+                "user_id": 0,
+                "source": "environment", 
+                "tier": "system",
+                "error": str(e)
+            })
+            return None
+
+    
+    
     async def validate_global_credentials(self) -> bool:
         """Validate global .env credentials"""
         try:
@@ -552,8 +591,8 @@ class APIKeyManager(BaseManager):
             return None
                    
       
-    async def validate_binance_credentials(self, user_id: int) -> bool:
-        """Validate Binance credentials with proper error handling"""
+    """async def validate_binance_credentials(self, user_id: int) -> bool:
+
         async with self._validation_lock:
             try:
                 creds = await self.get_apikey(user_id)
@@ -593,6 +632,54 @@ class APIKeyManager(BaseManager):
             except Exception as e:
                 logger.error(f"❌ Validation process failed for user {user_id}: {e}")
                 return False
+    """
+
+    async def validate_binance_credentials(self, user_id: int) -> bool:
+        """Validate Binance credentials with proper error handling"""
+        if not getattr(self, "enable_trading", False):
+            logger.warning(f"Trading is disabled - skipping Binance validation for user {user_id}")
+            return False
+
+        async with self._validation_lock:
+            try:
+                creds = await self.get_apikey(user_id)
+                if not creds:
+                    logger.warning(f"⚠️ No credentials found for user {user_id}")
+                    return False
+                    
+                api_key, secret_key = creds
+                
+                # Basic validation
+                if not api_key.startswith(('api_key_', 'binance_')) and len(api_key) < 16:
+                    logger.warning(f"⚠️ Invalid API key format for user {user_id}")
+                    return False
+                
+                client = await AsyncClient.create(api_key, secret_key)
+                
+                try:
+                    account_info = await client.get_account()
+                    if account_info and 'canTrade' in account_info:
+                        logger.info(f"✅ Binance credentials validated for user {user_id}")
+                        return True
+                    return False
+                    
+                except BinanceAPIException as e:
+                    logger.error(f"❌ Binance API error for user {user_id}: {e.code} - {e.message}")
+                    return False
+                except BinanceRequestException as e:
+                    logger.error(f"❌ Binance request error for user {user_id}: {e}")
+                    return False
+                except Exception as e:
+                    logger.error(f"❌ Unexpected Binance error for user {user_id}: {e}")
+                    return False
+                finally:
+                    await client.close_connection()
+                    
+            except Exception as e:
+                logger.error(f"❌ Validation process failed for user {user_id}: {e}")
+                return False
+
+
 
     async def rotate_keys(self, user_id: int, new_api_key: str, new_secret: str) -> bool:
         """Rotate API keys with validation"""
@@ -653,53 +740,6 @@ class APIKeyManager(BaseManager):
         except Exception as e:
             return {"error": str(e)}
             
-    # =======================================================
-    # 👇 Kişisel API key'i getir
-    # =======================================================
-
-    async def get_user_credentials(self, user_id: int) -> Optional[UserCredentials]:
-        try:
-            db = await self.get_db_connection()
-            cursor = await db.execute(
-                "SELECT api_key_encrypted, api_secret_encrypted FROM apikeys WHERE user_id = ?",
-                (user_id,)
-            )
-            row = await cursor.fetchone()
-            if row:
-                api_key = self._decrypt(row[0])
-                api_secret = self._decrypt(row[1])
-                return UserCredentials(
-                    user_id=user_id,
-                    api_key=api_key,
-                    api_secret=api_secret,
-                    tier=APITier.PRIVATE,
-                    is_valid=True
-                )
-        except Exception as e:
-            logger.warning(f"get_user_credentials() failed for user {user_id}: {e}")
-        return None
-    
-
-    # ✅ BİNANCE_A.PY İÇİN YARDIMCI METOD
-    # apikey_manager.py'de:
-    async def get_credentials_for_aggregator(self, user_id: Optional[int] = None) -> Tuple[str, str]:
-        """BinanceAggregator için credential getirme"""
-        # 1. Kişisel API
-        if user_id and user_id != GLOBAL_USER:
-            user_creds = await self.get_user_credentials(user_id)
-            if user_creds:
-                return user_creds.api_key, user_creds.api_secret  # ✅ Tuple olarak dön
-        
-        # 2. Global API fallback
-        global_creds = await self.get_global_apikey()
-        if global_creds:
-            return global_creds
-        
-        # 3. Hiçbiri yok
-        raise CredentialNotFoundError(f"No credentials found for user: {user_id}")
-        
-
-        
 
 # ============================================================
 # ALARM MANAGER
@@ -707,6 +747,7 @@ class APIKeyManager(BaseManager):
 
 class AlarmManager(BaseManager):
     _instance: Optional["AlarmManager"] = None
+    _initialized: bool = False
     _cache: Dict[int, Dict[str, Any]] = {}
     _cache_lock: asyncio.Lock = asyncio.Lock()
 
@@ -714,10 +755,17 @@ class AlarmManager(BaseManager):
         super().__init__()
 
     @classmethod
-    def get_instance(cls) -> "AlarmManager":
+    async def get_instance(cls) -> "AlarmManager":  # ✅ Async yap
         if cls._instance is None:
             cls._instance = AlarmManager()
+            await cls._instance._async_init()
         return cls._instance
+
+    async def _async_init(self):
+        if not self._initialized:
+            await self.ensure_db_initialized()
+            self._initialized = True
+
 
     async def set_alarm_settings(self, user_id: int, settings: dict) -> int:
         """Alarm ekle ve alarm_id döndür"""
@@ -823,6 +871,7 @@ class AlarmManager(BaseManager):
 
 class TradeSettingsManager(BaseManager):
     _instance: Optional["TradeSettingsManager"] = None
+    _initialized: bool = False
     _cache: Dict[int, Dict[str, Any]] = {}
     _cache_lock: asyncio.Lock = asyncio.Lock()
 
@@ -830,11 +879,17 @@ class TradeSettingsManager(BaseManager):
         super().__init__()
 
     @classmethod
-    def get_instance(cls) -> "TradeSettingsManager":
+    async def get_instance(cls) -> "TradeSettingsManager":  # ✅ Async yapı
         if cls._instance is None:
             cls._instance = TradeSettingsManager()
+            await cls._instance._async_init()
         return cls._instance
 
+    async def _async_init(self):
+        if not self._initialized:
+            await self.ensure_db_initialized()
+            self._initialized = True
+            
     async def cleanup_old_apikeys(self, days: int = 90) -> int:
         """Cleanup old API keys and return count of deleted records"""
         db = await self.get_db_connection()
@@ -866,8 +921,6 @@ class TradeSettingsManager(BaseManager):
 
 # ============================================================
 
-# Auto-initialize on import (optional)
-# asyncio.create_task(initialize_managers())
 """
 🔹 
 - Alarm işlemleri sırasında Telegram kullanıcısının user_id’si kullanılır.
