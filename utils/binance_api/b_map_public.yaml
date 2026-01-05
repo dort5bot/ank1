@@ -1,0 +1,948 @@
+#sdk_method >> endpoint_name
+sdk_method > endpoint_name
+http method > http_method
+signed=true > +
+
+#endpoint_name: get_klines      # ✅ SDK metod adı
+#- key: get_klines
+#  base: spot
+#  client: SpotClient
+#  sdk_method: get_klines     # +✅ ZORUNLU - SDK metod adı
+#  http_method: GET           # +✅ ZORUNLU - HTTP method  
+#  path: /api/v3/klines       # +✅ ZORUNLU - API path
+#  signed: False              # +✅ ZORUNLU - Auth gerekiyor mu?
+#  weight: 1                  # +✅ ZORUNLU - Rate limit için
+#  parameters:                # +✅ ZORUNLU - Parametre validasyonu
+#  
+#_direct_endpoints = {7
+#    'get_avg_price': {
+#        'base': 'spot',                # ✅ ZORUNLU - API base belirler
+#        'http_method': 'GET',          #+✅ ZORUNLU - HTTP method
+#        'path': '/api/v3/avgPrice',    #+✅ ZORUNLU - Endpoint path
+#        'signed': False,               # ✅ ZORUNLU - Auth gerekiyor mu?
+#        'weight': 1,                   # ✅ ZORUNLU - Rate limit için
+#        'parameters': [                # ✅ ZORUNLU - Parametre validasyonu
+#            {'name': 'symbol', 'required': True}
+#        ]
+#    }
+#}
+#
+key: get_klines
+  base: spot
+  client: SpotClient
+  endpoint_name: get_klines
+  http_method: GET
+  path: /api/v3/klines
+  cache_ttl: 15
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - candles
+  - trend
+  - analysis
+  purpose: Fetch historical OHLCV data for trend, momentum and volatility analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- 
+
+
+
+meta:
+  file_name: utils/binance_api/b_map_public
+  schema_version: '1.3'
+  version: '2025.11'
+  maintainer: ysf-bot-framework
+  description: Binance REST public API map (Spot & Futures endpoints)
+  category: market_data
+  cache_strategy: tiered
+  validation_schema: binance_v2
+  source: Binance
+  last_updated: '2025-11-11'
+  sections:
+  - public_spot
+  - public_futures
+validation_patterns:
+  symbol:
+    type: string
+    pattern: ^[A-Z]{3,20}(USDT|BUSD|BTC|ETH)$
+  interval:
+    type: string
+    enum:
+    - 1m
+    - 3m
+    - 5m
+    - 15m
+    - 30m
+    - 1h
+    - 2h
+    - 4h
+    - 6h
+    - 12h
+    - 1d
+    - 1w
+    - 1M
+  limit:
+    type: integer
+    min: 1
+    max: 1000
+    default: 500
+  period:
+    type: string
+    enum:
+    - 5m
+    - 15m
+    - 30m
+    - 1h
+    - 2h
+    - 4h
+    - 6h
+    - 12h
+    - 1d
+  contract_type:
+    type: string
+    enum:
+    - PERPETUAL
+    - CURRENT_QUARTER
+    - NEXT_QUARTER
+public_spot:
+- key: get_avg_price
+  base: spot
+  client: SpotClient
+  endpoint_name: get_avg_price
+  http_method: GET
+  path: /api/v3/avgPrice
+  cache_ttl: 5
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - price
+  - trend
+  purpose: Get average price for trend/momentum analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: exchange_info
+  base: spot
+  client: SpotClient
+  endpoint_name: exchange_info
+  http_method: GET
+  path: /api/v3/exchangeInfo
+  cache_ttl: 3600
+  parameters: []
+  return_type: dict
+  weight: 10
+  tags:
+  - public
+  - meta
+  - exchange
+  purpose: Fetch exchange trading rules, symbol info, filters
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: historical_trades
+  base: spot
+  client: SpotClient
+  endpoint_name: historical_trades
+  http_method: GET
+  path: /api/v3/historicalTrades
+  cache_ttl: 30
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - market
+  - trades
+  - historical
+  purpose: Get older market trades
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: get_klines
+  base: spot
+  client: SpotClient
+  endpoint_name: get_klines
+  http_method: GET
+  path: /api/v3/klines
+  cache_ttl: 15
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - candles
+  - trend
+  - analysis
+  purpose: Fetch historical OHLCV data for trend, momentum and volatility analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: ui_klines
+  base: spot
+  client: SpotClient
+  endpoint_name: ui_klines
+  http_method: GET
+  path: /api/v3/uiKlines
+  cache_ttl: 15
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - candles
+  - ui
+  - chart
+  purpose: Fetch OHLCV data optimized for UI/chart display
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: order_book_depth
+  base: spot
+  client: SpotClient
+  endpoint_name: order_book_depth
+  http_method: GET
+  path: /api/v3/depth
+  cache_ttl: 10
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: dict
+  weight: 5
+  tags:
+  - public
+  - orderbook
+  - liquidity
+  - depth
+  purpose: Fetch full order book depth (bids/asks) for liquidity and imbalance analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: order_book_ticker
+  base: spot
+  client: SpotClient
+  endpoint_name: order_book_ticker
+  http_method: GET
+  path: /api/v3/ticker/bookTicker
+  cache_ttl: 3
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - orderbook
+  - liquidity
+  purpose: Fetch best bid/ask data for orderbook-based liquidity analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: recent_trades
+  base: spot
+  client: SpotClient
+  endpoint_name: recent_trades
+  http_method: GET
+  path: /api/v3/trades
+  cache_ttl: 5
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - market
+  - trades
+  purpose: Fetch recent trades for a symbol
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: server_time
+  base: spot
+  client: SpotClient
+  endpoint_name: server_time
+  http_method: GET
+  path: /api/v3/time
+  cache_ttl: 3600
+  parameters: []
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - system
+  - time
+  purpose: Get server time for synchronization
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: symbol_ticker
+  base: spot
+  client: SpotClient
+  endpoint_name: symbol_ticker
+  http_method: GET
+  path: /api/v3/ticker/price
+  cache_ttl: 5
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - price
+  - analysis
+  purpose: Get current price for symbol (used in trend/correlation analysis)
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: ticker_24hr
+  base: spot
+  client: SpotClient
+  endpoint_name: ticker_24hr
+  http_method: GET
+  path: /api/v3/ticker/24hr
+  cache_ttl: 5
+  parameters:
+  - name: symbol
+    type: string
+    required: false
+  return_type: auto
+  weight: 1
+  tags:
+  - public
+  - ticker
+  - volatility
+  - analysis
+  purpose: Retrieve 24-hour price change statistics for trend strength metrics
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+public_futures:
+- key: continuous_klines
+  base: futures
+  client: FuturesClient
+  endpoint_name: continuous_klines
+  http_method: GET
+  path: /fapi/v1/continuousKlines
+  cache_ttl: 15
+  parameters:
+  - name: pair
+    type: string
+    required: true
+  - name: contractType
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - candles
+  - futures
+  purpose: Fetch continuous futures candlestick data for trend alignment
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: funding_rate
+  base: futures
+  client: FuturesClient
+  endpoint_name: funding_rate
+  http_method: GET
+  path: /fapi/v1/fundingRate
+  cache_ttl: 30
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  - name: startTime
+    type: integer
+    required: false
+  - name: endTime
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - funding
+  - sentiment
+  purpose: Current (Historical) funding rates for sentiment and funding premium analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: adl_quantile
+  base: futures
+  client: FuturesClient
+  endpoint_name: adl_quantile
+  http_method: GET
+  path: /fapi/v1/adlQuantile
+  cache_ttl: 60
+  parameters:
+  - name: symbol
+    type: string
+    required: false
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - futures
+  - liquidation
+  - risk
+  purpose: Retrieve ADL quantile data for liquidation risk metrics
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: basis
+  base: futures
+  client: FuturesClient
+  endpoint_name: basis
+  http_method: GET
+  path: /futures/data/basis
+  cache_ttl: 30
+  parameters:
+  - name: pair
+    type: string
+    required: true
+  - name: period
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - futures
+  - basis
+  - arbitrage
+  purpose: Fetch futures basis data for arbitrage analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: aggregate_trades
+  base: futures
+  client: FuturesClient
+  endpoint_name: aggregate_trades
+  http_method: GET
+  path: /fapi/v1/aggTrades
+  cache_ttl: 10
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - futures
+  - trades
+  - aggregate
+  purpose: Fetch compressed aggregate trades for futures
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: exchange_info
+  base: futures
+  client: FuturesClient
+  endpoint_name: exchange_info
+  http_method: GET
+  path: /fapi/v1/exchangeInfo
+  cache_ttl: 3600
+  parameters: []
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - futures
+  - exchange
+  - info
+  purpose: Get futures exchange information
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: futures_historical_trades
+  base: futures
+  client: FuturesClient
+  endpoint_name: historical_trades
+  http_method: GET
+  path: /fapi/v1/historicalTrades
+  cache_ttl: 30
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - futures
+  - trades
+  - historical
+  purpose: Fetch historical trades for futures symbols
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: index_info
+  base: futures
+  client: FuturesClient
+  endpoint_name: index_info
+  http_method: GET
+  path: /fapi/v1/indexInfo
+  cache_ttl: 60
+  parameters: []
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - futures
+  - index
+  - composite
+  purpose: Get composite index information for futures
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: futures_klines
+  base: futures
+  client: FuturesClient
+  endpoint_name: klines
+  http_method: GET
+  path: /fapi/v1/klines
+  cache_ttl: 15
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - candles
+  - futures
+  purpose: Fetch standard futures OHLCV data
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: mark_price_klines
+  base: futures
+  client: FuturesClient
+  endpoint_name: mark_price_klines
+  http_method: GET
+  path: /fapi/v1/markPriceKlines
+  cache_ttl: 15
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - futures
+  - candles
+  - mark_price
+  purpose: Fetch mark price klines for funding analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: order_book
+  base: futures
+  client: FuturesClient
+  endpoint_name: order_book
+  http_method: GET
+  path: /fapi/v1/depth
+  cache_ttl: 10
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: dict
+  weight: 5
+  tags:
+  - public
+  - orderbook
+  - futures
+  - depth
+  purpose: Fetch futures order book depth for liquidity analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: premium_index
+  base: futures
+  client: FuturesClient
+  endpoint_name: premium_index
+  http_method: GET
+  path: /fapi/v1/premiumIndex
+  cache_ttl: 10
+  parameters: []
+  return_type: auto
+  weight: 1
+  tags:
+  - public
+  - futures
+  - funding
+  - composite
+  purpose: Get mark price and funding rate for all symbols at once
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: futures_recent_trades
+  base: futures
+  client: FuturesClient
+  endpoint_name: recent_trades
+  http_method: GET
+  path: /fapi/v1/trades
+  cache_ttl: 5
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - futures
+  - trades
+  - market
+  purpose: Fetch recent trades for futures symbols
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: symbol_ticker
+  base: futures
+  client: FuturesClient
+  endpoint_name: symbol_ticker
+  http_method: GET
+  path: /fapi/v1/ticker/price
+  cache_ttl: 5
+  parameters: []
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - futures
+  - price
+  - analysis
+  purpose: Get current futures symbol price for trend and correlation analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: futures_ticker_24hr
+  base: futures
+  client: FuturesClient
+  endpoint_name: ticker_24hr
+  http_method: GET
+  path: /fapi/v1/ticker/24hr
+  cache_ttl: 10
+  parameters: []
+  return_type: auto
+  weight: 1
+  tags:
+  - public
+  - futures
+  - ticker
+  - volatility
+  - analysis
+  - market
+  purpose: Retrieve 24-hour ticker data (price change, volume, high/low) for USDT-M
+    futures
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: global_long_short_account_ratio
+  base: futures
+  client: FuturesClient
+  endpoint_name: global_long_short_account_ratio
+  http_method: GET
+  path: /futures/data/globalLongShortAccountRatio
+  cache_ttl: 300
+  parameters: []
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - market
+  - ratio
+  - sentiment
+  purpose: Fetch global long/short account ratio
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: index_price_klines
+  base: futures
+  client: FuturesClient
+  endpoint_name: index_price_klines
+  http_method: GET
+  path: /fapi/v1/indexPriceKlines
+  cache_ttl: 15
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: interval
+    type: string
+    required: true
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - candles
+  - futures
+  purpose: Fetch index price candlestick data for regime and volatility models
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: force_orders
+  base: futures
+  client: FuturesClient
+  endpoint_name: force_orders
+  http_method: GET
+  path: /fapi/v1/allForceOrders
+  cache_ttl: 20
+  parameters: []
+  return_type: list
+  weight: 20
+  tags:
+  - public
+  - liquidation
+  - risk
+  - futures
+  purpose: Fetch forced liquidation data for stress and volatility metrics
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: long_short_account_ratio
+  base: futures
+  client: FuturesClient
+  endpoint_name: long_short_account_ratio
+  http_method: GET
+  path: /futures/data/longShortAccountRatio
+  cache_ttl: 300
+  parameters: []
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - sentiment
+  - futures
+  purpose: Retrieve global long vs short ratio for sentiment analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: open_interest
+  base: futures
+  client: FuturesClient
+  endpoint_name: open_interest
+  http_method: GET
+  path: /fapi/v1/openInterest
+  cache_ttl: 10
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  return_type: dict
+  weight: 1
+  tags:
+  - public
+  - open_interest
+  - liquidity
+  - futures
+  purpose: Retrieve open interest data for liquidity/trend confirmation
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: open_interest_hist
+  base: futures
+  client: FuturesClient
+  endpoint_name: open_interest_hist
+  http_method: GET
+  path: /futures/data/openInterestHist
+  cache_ttl: 3600
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: period
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  - name: startTime
+    type: string
+    required: false
+  - name: endTime
+    type: string
+    required: false
+  return_type: list
+  weight: 1
+  tags:
+  - public
+  - market
+  - open_interest
+  purpose: Fetch historical open interest data
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: taker_buy_sell_volume
+  base: futures
+  client: FuturesClient
+  endpoint_name: taker_buy_sell_volume
+  http_method: GET
+  path: /futures/data/takerBuySellVol
+  cache_ttl: 60
+  parameters:
+  - name: symbol
+    type: string
+    required: true
+  - name: period
+    type: string
+    required: true
+  - name: limit
+    type: integer
+    required: false
+  return_type: list
+  weight: 10
+  tags:
+  - public
+  - futures
+  - volume
+  - orderflow
+  purpose: Fetch taker buy/sell volume for microstructure analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: taker_long_short_ratio
+  base: futures
+  client: FuturesClient
+  endpoint_name: taker_long_short_ratio
+  http_method: GET
+  path: /futures/data/takerlongshortRatio
+  cache_ttl: 60
+  parameters: []
+  return_type: list
+  weight: 10
+  tags:
+  - public
+  - futures
+  - sentiment
+  - ratio
+  purpose: Fetch taker long/short ratio for sentiment and momentum analysis
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: top_long_short_account_ratio
+  base: futures
+  client: FuturesClient
+  endpoint_name: top_long_short_account_ratio
+  http_method: GET
+  path: /futures/data/topLongShortAccountRatio
+  cache_ttl: 300
+  parameters: []
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - market
+  - ratio
+  - sentiment
+  purpose: Fetch top trader long/short account ratio
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
+- key: top_long_short_position_ratio
+  base: futures
+  client: FuturesClient
+  endpoint_name: top_long_short_position_ratio
+  http_method: GET
+  path: /futures/data/topLongShortPositionRatio
+  cache_ttl: 300
+  parameters: []
+  return_type: list
+  weight: 5
+  tags:
+  - public
+  - market
+  - ratio
+  - sentiment
+  purpose: Fetch top trader long/short position ratio
+  rate_limit_group: public_read
+  composite_scope: market/general
+  cache_policy: short
