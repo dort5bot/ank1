@@ -37,9 +37,7 @@ class ContextFilter(logging.Filter):
         # Security sanitization
         if hasattr(record, 'msg') and isinstance(record.msg, dict):
             record.msg = security_auditor.sanitize_log_data(record.msg)
-        
-        return True
-        
+                
     
         # Add multi-user context
         record.multi_user = True

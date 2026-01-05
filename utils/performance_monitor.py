@@ -134,12 +134,12 @@ def monitor_performance(func_name: Optional[str] = None, warning_threshold: floa
                 # Log warning if too slow
                 if processing_time > warning_threshold:
                     logger.warning(
-                        f"⏱️ PERFORMANCE - {actual_func_name} took {processing_time:.2f}s "
+                        f" PERFORMANCE - {actual_func_name} took {processing_time:.2f}s "
                         f"(threshold: {warning_threshold}s)"
                     )
                 elif processing_time > warning_threshold * 0.5:  # 50% of threshold
                     logger.info(
-                        f"⏱️ Performance - {actual_func_name} took {processing_time:.2f}s"
+                        f" Performance - {actual_func_name} took {processing_time:.2f}s"
                     )
                 
                 return result
@@ -149,7 +149,7 @@ def monitor_performance(func_name: Optional[str] = None, warning_threshold: floa
                 monitor.record_metric(actual_func_name, processing_time, success=False)
                 
                 logger.error(
-                    f"❌ PERFORMANCE ERROR - {actual_func_name} failed after "
+                    f" PERFORMANCE ERROR - {actual_func_name} failed after "
                     f"{processing_time:.2f}s: {e}"
                 )
                 raise
@@ -168,7 +168,7 @@ def monitor_performance(func_name: Optional[str] = None, warning_threshold: floa
                 
                 if processing_time > warning_threshold:
                     logger.warning(
-                        f"⏱️ PERFORMANCE - {actual_func_name} took {processing_time:.2f}s "
+                        f" PERFORMANCE - {actual_func_name} took {processing_time:.2f}s "
                         f"(threshold: {warning_threshold}s)"
                     )
                 
@@ -179,7 +179,7 @@ def monitor_performance(func_name: Optional[str] = None, warning_threshold: floa
                 monitor.record_metric(actual_func_name, processing_time, success=False)
                 
                 logger.error(
-                    f"❌ PERFORMANCE ERROR - {actual_func_name} failed after "
+                    f" PERFORMANCE ERROR - {actual_func_name} failed after "
                     f"{processing_time:.2f}s: {e}"
                 )
                 raise
