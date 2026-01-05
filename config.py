@@ -3,7 +3,7 @@ import os
 import logging
 import sys
 from enum import Enum
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, ClassVar
 from pathlib import Path
 from functools import lru_cache
 from dotenv import load_dotenv
@@ -76,10 +76,15 @@ class Settings(BaseSettings):
     MASTER_KEY: str = Field(default="")
     
     # DATABASE_URL: str = "data/apikeys.db"
-    RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", "/tmp/zbot1"))
-    DATABASE_URL: str = str(RUNTIME_DIR / "data" / "apikeys.db")
+    # RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", "/tmp/zbot1"))
+    RUNTIME_DIR: Path = Field(default=Path("/tmp/zbot1"))
 
+    # DATABASE_URL: str = str(RUNTIME_DIR / "data" / "apikeys.db")
 
+    @computed_field
+    @property
+    def DATABASE_URL(self) -> str:
+        return str(self.RUNTIME_DIR / "data" / "apikeys.db")
 
 
 
@@ -97,6 +102,11 @@ class Settings(BaseSettings):
             new_key = Fernet.generate_key().decode()
             return new_key
         return v
+
+
+    # market_collector  için zamanlayıcı
+    COLLECT_INTERVAL_SECONDS: int = 600 # 10 dk
+
 
     # --- SCAN & TRADING PARAMS ---
     # p12_handler, a11_handler için - sadece sembol listesi

@@ -43,6 +43,7 @@ from utils.security_auditor import security_auditor
 from utils.binance_api.binance_a import BinanceAggregator
 from utils.binance_api.binance_exceptions import BinanceAPIError, BinanceAuthenticationError
 
+from analysis.market_collector import collect_once
 
 # ---------------------------------------------------------------------
 # Global instances - LOGGER
@@ -773,6 +774,9 @@ async def lifespan(config: Settings = config):
         print("DEBUG: Startup sequence completed")
 
         print("DEBUG: All components initialized successfully")
+        
+        # ✅ BACKGROUND COLLECTOR BAŞLAT
+        asyncio.create_task(background_market_collector())
         yield
         
     except Exception as e:
@@ -868,6 +872,39 @@ async def start_periodic_cleanup():
         logger.info("🛑 Periodic cleanup task cancelled")
     except Exception as e:
         logger.error(f"❌ Periodic cleanup error: {e}")
+
+
+# ---------------------------------------------------------------------
+# BACKGROUND TASKS - 10dk arayla veri toplar - sürekli
+# ---------------------------------------------------------------------
+async def background_market_collector():
+    """Bot ile birlikte çalışan arka plan market collector
+    - İlk çalışmayı hemen yapar
+    - Sonraki çalışmaları COLLECT_INTERVAL_SECONDS'e göre yapar
+    """
+    logger.info("📡 Background market collector started")
+
+    interval = config.COLLECT_INTERVAL_SECONDS
+    first_run = True
+
+    while not shutdown_event.is_set():
+        start_time = time.time()
+
+        try:
+            rows = await collect_once()
+            logger.info(f"📥 Collector: {rows} kayıt yazıldı")
+        except Exception as e:
+            logger.error(f"❌ Collector error: {e}", exc_info=True)
+
+        # İlk çalışmadan sonra bekleme başlar
+        elapsed = time.time() - start_time
+        sleep_time = max(0, interval - elapsed)
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=sleep_time)
+        except asyncio.TimeoutError:
+            pass
+
 
 # ---------------------------------------------------------------------
 # OPTIMIZED MAIN ENTRY POINT - CONFIG TABANLI
