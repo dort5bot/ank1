@@ -1,31 +1,4 @@
-# a_core.py (updated) - fetch endpoints per-metric and fully parallel pipeline
-"""
-fetch_data_for_pipeline şunları yapar:
-required_endpoints = ["klines"] (sadece klines)
-fetcher.fetch_all_for_symbol("BTCUSDT", ["klines"])
-Binance'den klines verisini çeker
-
--özet--
-| Amaç                          | Gerekli Kombinasyon        |
-| ----------------------------- | -------------------------- |
-| **Ana yön kararı**            | `alphax + core + risk`     |
-| **Trend ortamı mı?**          | `complexity + regim + vol` |
-| **Scalp teyidi**              | `trend + mom + order`   |
-| **Sentiment tuzağı filtresi** | `sentflow + trend + risk`  |
-| **Trade izni**                | `microstructure + liqrisk` |
-
-| Composite | Cevapladığı Soru          |
-| --------- | ------------------------- |
-| trend     | *Yön var mı?*             |
-| mom    | *hız:Yön hızlanıyor mu?*      |
-| vol       | *rejim:Ortam ne kadar oynak?*   |
-| sentiment | *ağırlık:Pozisyonlanma ne diyor?* |
-| risk      | *Bu iş patlar mı?*        |
-
-
-
-"""
-
+# a_core.py
 from __future__ import annotations
 import asyncio
 import logging
@@ -34,42 +7,35 @@ import ast
 import concurrent.futures
 import os
 from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Set
+from datetime import datetime
 from functools import partial
+
+import pandas as pd
+import numpy as np
 
 from analysis.metricresolver import get_default_resolver
 from utils.binance_api.binance_a import BinanceAggregator
 
-import pandas as pd
-import numpy as np
-from datetime import datetime
-
 # ------------------------------------------------------------
-# Logger
+# 1. LOGGING & CONSTANTS
 # ------------------------------------------------------------
 logger = logging.getLogger("analysis.core")
-if not logger.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
-    logger.addHandler(h)
-# logger.setLevel(logging.INFO)
-logger.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
+
+INDEX_BASKET = [
+    "ETHUSDT", "SOLUSDT", "BNBUSDT", "PEPEUSDT", "WIFUSDT", "DOGEUSDT",
+    "FETUSDT", "NEARUSDT", "TAOUSDT", "SUIUSDT", "APTUSDT", "OPUSDT",
+    "ARBUSDT", "LINKUSDT", "AVAXUSDT", "ONDOUSDT", "PENDLEUSDT", "XRPUSDT"
+]
+
+WATCHLIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PEPEUSDT", "FETUSDT", "SUSDT", "ARPAUSDT"]
+
+# Önemli: Collector'ın neyi toplayacağını bilmesi için birleştirilmiş liste
+FULL_COLLECT_LIST = list(set(INDEX_BASKET + WATCHLIST + ["BTCUSDT"]))
 
 # ------------------------------------------------------------
-# Globals & Constants
+# 2. CONFIGURATION (COMPOSITES & MACROS)
 # ------------------------------------------------------------
-DEFAULT_DATA_MODEL = "pandas"
-
-# ------------------------------------------------------------
-# COMPOSITES / MACROS maps 
-# ------------------------------------------------------------
-"""
-composite veya macro SADECE 1 cevap vermeli:
-yön mü?
-filtre mi?
-risk mi?
-"""
-
-
 COMPOSITES = {
     
     # ✅ Başrılı-anlamlı
@@ -143,15 +109,10 @@ COMPOSITES = {
     "flow": {
         "depends": ["etf_net_flow", "exchange_netflow", "stablecoin_flow"],
         "formula": "0.4*etf_net_flow - 0.3*exchange_netflow + 0.3*stablecoin_flow",
-    },
-
-}	
+    },}	
 # Binance API ile doğrudan elde edilemeyenler
 # market_impact, depth_elasticity, taker_dominance_ratio (ham veriden türetilir ama direkt verilmez)
 # ⚠️ garch_1_1, hurst_exponent, fdi, variance_ratio_test, fractal_dimension_index_fdi
-
-
-
 
 MACROS = {	
     "core": { #→ karar: ANA METRİK: pusula: Trade bias / pozisyon yönü için ideal
@@ -188,1040 +149,567 @@ MACROS = {
     "microstructure": {
         "depends": ["liqu", "liqrisk", "order"],
         "formula": "0.4*liqu+ 0.35*liqrisk + 0.25*order",
-    },
-}
+    },}
 
 # ------------------------------------------------------------
-# Formula compile helpers (unchanged)
-# ------------------------------------------------------------
-_ALLOWED_NODES = {
-    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Load, ast.Add,
-    ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd, ast.Name,
-    ast.Constant, ast.Mod, ast.FloorDiv, ast.Call
-}
+# temizleyici ve ölçekleyici fonksiyonlar
 
-_formula_compile_cache: Dict[str, Any] = {}
-_formula_compile_lock = asyncio.Lock()
+class CoreAnalyzer:
+    def __init__(self, resolver, config):
+        self.resolver = resolver
+        self.config = config
 
-def _validate_ast(node: ast.AST) -> None:
-    for n in ast.walk(node):
-        if type(n) not in _ALLOWED_NODES:
-            raise ValueError(f"Disallowed AST node: {type(n).__name__}")
+    def _fix_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """ESKİ ÇÖZÜM: Suffixleri temizler ve indikatörlerin hata almasını önler."""
+        if df is None or df.empty: return df
+        # Sütunlardaki __klines gibi ekleri temizle (BNB hatasının ana sebebi)
+        df.columns = [c.split('__')[0] for c in df.columns]
+        return df
 
-async def _get_compiled_formula(formula: str):
-    if not formula:
-        return None
-    if formula in _formula_compile_cache:
-        return _formula_compile_cache[formula]
-    async with _formula_compile_lock:
-        if formula in _formula_compile_cache:
-            return _formula_compile_cache[formula]
+    def _normalize_signal(self, name: str, value: float, df: pd.DataFrame) -> float:
+        """ESKİ ÇÖZÜM: BNB fiyatı 600$ olsa bile skoru -1 ile 1 arasına çeker."""
         try:
-            tree = ast.parse(formula, mode="eval")
-            _validate_ast(tree)
-            code = compile(tree, "<formula>", "eval")
-            _formula_compile_cache[formula] = code
-            return code
-        except Exception as e:
-            logger.warning(f"Formula compile failed: {formula} -> {e}")
-            _formula_compile_cache[formula] = None
-            return None
+            price = df['close'].iloc[-1]
+            # Fiyat bazlıları oranla (İlkel kalmasını engelleyen kısım burasıydı)
+            if name in ['ema', 'macd', 'bollinger']:
+                return np.tanh((price - value) / value * 10)
+            # RSI/Stoch gibi 0-100 arası olanları merkeze çek
+            if 0 <= value <= 100:
+                return (value - 50) / 50
+            return np.clip(value, -1, 1)
+        except:
+            return 0.0
 
-def evaluate_compiled_formula(code_obj, ctx: Dict[str, float]) -> float:
-    if code_obj is None: return 0.0
-    # ctx içindeki nan değerlerini 0.0 ile temizle
-    safe_ctx = {k: (v if not math.isnan(v) else 0.0) for k, v in ctx.items()}
-    try:
-        val = eval(code_obj, {"__builtins__": {}}, safe_ctx)
-        return float(val) if val is not None else 0.0
-    except Exception:
-        return 0.0
-
-
-# ------------------------------------------------------------
-# Utilities from original file: resolve_scores_to_metrics, extract_final_value, etc.
-# Keep them the same as original. (Copy/paste from your original a_core.py)
-def resolve_scores_to_metrics(requested_scores: List[str], COMPOSITES: Dict = None, MACROS: Dict = None) -> Dict[str, List[str]]:
-    COMPOSITES = COMPOSITES or {}
-    MACROS = MACROS or {}
-    out = {}
-    for score_name in requested_scores:
-        metrics = []
-        if score_name in COMPOSITES:
-            metrics.extend(COMPOSITES[score_name].get("depends", []))
-        elif score_name in MACROS:
-            for dep in MACROS[score_name].get("depends", []):
-                if dep in COMPOSITES:
-                    metrics.extend(COMPOSITES[dep].get("depends", []))
-        out[score_name] = sorted(set(metrics))
-    return out
-
-# (extract_final_value function unchanged - paste from original)
-
-def extract_final_value(raw_result: Any, metric_name: str) -> float:
-    if raw_result is None:
-        return float("nan")
-    
-    try:
-        # 1. Zaten float/int ise direkt döndür
-        if isinstance(raw_result, (int, float, np.number)):
-            return float(raw_result)  # ← BU KESİNLİKLE ÇALIŞACAK
-        
-        # 2. Pandas Series
-        if isinstance(raw_result, pd.Series):
-            if raw_result.empty:
-                return float("nan")
-            return float(raw_result.iat[-1])
-        
-        # 3. DataFrame
-        if isinstance(raw_result, pd.DataFrame):
-            if raw_result.empty:
-                return float("nan")
-            for col in ['value', 'score', metric_name, 'result']:
-                if col in raw_result.columns:
-                    try:
-                        return float(raw_result[col].iat[-1])
-                    except Exception:
-                        continue
-            try:
-                return float(raw_result.iat[-1, 0])
-            except Exception:
-                return float("nan")
-        if isinstance(raw_result, (list, tuple, np.ndarray)):
-            try:
-                if isinstance(raw_result, np.ndarray):
-                    if raw_result.size == 0:
-                        return float("nan")
-                    return float(np.asarray(raw_result).flat[-1])
-                else:
-                    if len(raw_result) == 0:
-                        return float("nan")
-                    return float(raw_result[-1])
-            except Exception:
-                return float("nan")
-        if isinstance(raw_result, dict):
-            for key in ('value', 'score', metric_name, 'result', 'data'):
-                if key in raw_result:
-                    try:
-                        return float(raw_result[key])
-                    except Exception:
-                        continue
-            for v in raw_result.values():
-                if isinstance(v, (int, float, np.number)):
-                    return float(v)
-            return float("nan")
-        if isinstance(raw_result, (int, float, np.number)):
-            return float(raw_result)
-        if isinstance(raw_result, str):
-            try:
-                return float(raw_result)
-            except Exception:
-                return float("nan")
-        return float(str(raw_result))
-    except Exception:
-        return float("nan")
-
-
-# ------------------------------------------------------------
-# ThreadPool executor (shared) - Global Seviye
-# ------------------------------------------------------------
-
-_CPU = os.cpu_count() or 2
-_DEFAULT_MAX_WORKERS = min(max(4, _CPU * 2), 20)
-_global_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_DEFAULT_MAX_WORKERS)
-
-
-_CPU_EXECUTOR = concurrent.futures.ProcessPoolExecutor(
-    max_workers=os.cpu_count()
-)
-_IO_EXECUTOR = _global_executor
-
-
-def run_sync_metric(
-    fn: Callable,
-    inp,
-    params: Dict,
-    metric_name: str
-) -> Tuple[str, float]:
-    """
-    Global seviyeye taşınan senkron metrik çalıştırıcı.
-    Artık pickle edilebilir (ProcessPool için uygun).
-    """
-    try:
-        # Not: extract_final_value fonksiyonunun da globalde tanımlı olduğundan emin olun
-        raw = fn(inp, **params)
-        val = extract_final_value(raw, metric_name)
-        
-        # NaN kontrolü ve kırpma
-        if math.isnan(val):
-            return metric_name, float("nan")
+    async def analyze_symbol(self, symbol: str, data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+        """Senin ana mantığına sadık kalınan analiz süreci."""
+        try:
+            # 1. Adım: Veriyi tamir et (Eski yöntem)
+            klines = self._fix_dataframe(data.get('klines'))
             
-        return metric_name, float(np.clip(val, -1, 1))
-    except Exception as e:
-        # Alt processlerdeki hataları ana sürece bildirmek için log veya hata dönüyoruz
-        return metric_name, float("nan")
-
-async def run_async_metric(
-    fn: Callable,
-    inp,
-    params: Dict,
-    metric_name: str
-) -> Tuple[str, float]:
-    """Asenkron metrik çalıştırıcı (Global scope)"""
-    try:
-        raw = await fn(inp, **params)
-        val = extract_final_value(raw, metric_name)
-        
-        if math.isnan(val):
-            return metric_name, float("nan")
+            # 2. Adım: Metrikleri tek tek hesapla ve anında normalize et
+            metrics = {}
+            defs = self.resolver.get_all_definitions()
             
-        return metric_name, float(np.clip(val, -1, 1))
-    except Exception as e:
-        return metric_name, float("nan")
-        
-# ------------------------------------------------------------
-# Data preparation (unchanged)
-# ------------------------------------------------------------
+            for name, func in defs.items():
+                try:
+                    raw_val = func(klines)
+                    # Buradaki normalizasyon BNB'nin kilitlenmesini çözer
+                    metrics[name] = self._normalize_signal(name, raw_val, klines)
+                except Exception as e:
+                    logger.warning(f"{symbol} - {name} hesaplanamadı: {e}")
+                    metrics[name] = 0.0
 
-def prepare_data(data: pd.DataFrame, def_info: Dict) -> Any:
-    if data is None or data.empty:
-        return pd.DataFrame()
+            # 3. Adım: Trend skoru (Kompozit hesaplama)
+            # Senin 1 aydır kullandığın ağırlıkları buraya gir:
+            trend = (
+                0.30 * metrics.get('ema', 0) + 
+                0.30 * metrics.get('macd', 0) + 
+                0.20 * metrics.get('rsi', 0) + 
+                0.20 * metrics.get('stochastic_oscillator', 0)
+            )
 
-    data_model = def_info.get("data_model", "pandas")
-    required_cols = def_info.get("required_columns", []) or []
-
-    if required_cols:
-        selected_cols = {}
-
-        for col in required_cols:
-            # 1️⃣ Direkt varsa
-            if col in data.columns:
-                selected_cols[col] = data[col]
-                continue
-
-            # 2️⃣ suffix’li kolonları ara (close__klines gibi)
-            matches = [c for c in data.columns if c.startswith(col + "__")]
-            if matches:
-                # ilk bulunanı al (klines genelde tek olur)
-                selected_cols[col] = data[matches[0]]
-
-        if not selected_cols:
-            return pd.DataFrame()
-
-        selected = pd.DataFrame(selected_cols, index=data.index)
-    else:
-        selected = data
-
-    if data_model == "numpy":
-        try:
-            return selected.to_numpy()
-        except Exception:
-            return selected
-
-    if data_model == "polars":
-        try:
-            import polars as pl
-            return pl.from_pandas(selected)
-        except Exception:
-            return selected
-
-    return selected
-
-
-
-# ------------------------------------------------------------
-# Metric execution (unchanged)
-# ------------------------------------------------------------
-# sadece debug, debugsuz olanı altta
-# max_workers: int = None
-# Parallel, NaN-safe, CPU-aware metric execution engine.
-
-async def calculate_metrics(
-    data: pd.DataFrame,
-    metric_defs: Dict[str, Dict],
-    max_workers: int = None
-) -> Dict[str, float]:
-    logger.debug(f"calculate_metrics called with {len(metric_defs)} metrics")
-
-    if data is None or data.empty or not metric_defs:
-        logger.warning("No data or metric definitions")
-        return {}
-
-    loop = asyncio.get_running_loop()
-    results: Dict[str, float] = {}
-    tasks: List[asyncio.Future] = []
-
-    # Executor'lar (Bunların yukarıda tanımlandığını varsayıyoruz)
-    CPU_EXECUTOR = _CPU_EXECUTOR
-    IO_EXECUTOR = _global_executor
-
-    for name, def_info in metric_defs.items():
-        func = def_info.get("function")
-        params = def_info.get("default_params", {}) or {}
-        exec_type = def_info.get("execution_type", "sync")
-        metadata = def_info.get("metadata", {}) or {}
-
-        if func is None:
-            results[name] = float("nan")
-            continue
-
-        try:
-            input_data = prepare_data(data, def_info)
+            return {
+                "symbol": symbol,
+                "trend": np.clip(trend, -1, 1),
+                "metrics": metrics,
+                "status": "success"
+            }
         except Exception as e:
-            logger.debug(f"prepare_data failed: {name} → {e}")
-            results[name] = float("nan")
-            continue
-
-        # Minimum bar kontrolü
-        min_bars = metadata.get("min_bars", 1)
-        if hasattr(input_data, "__len__") and len(input_data) < min_bars:
-            results[name] = float("nan")
-            continue
-
-        # --- ASYNC GÖREVLER ---
-        if exec_type == "async":
-            tasks.append(
-                asyncio.create_task(
-                    run_async_metric(func, input_data, params, name)
-                )
-            )
-            continue
-
-        # --- SYNC GÖREVLER (Executor ile) ---
-        category = metadata.get("category", "")
-        # Kategoriye göre doğru executor seçimi
-        executor = CPU_EXECUTOR if category in ("advanced", "volatility") else IO_EXECUTOR
-
-        # run_in_executor artık global 'run_sync_metric' fonksiyonunu sorunsuzca pickle edebilir
-        future = loop.run_in_executor(
-            executor,
-            run_sync_metric,
-            func,
-            input_data,
-            params,
-            name
-        )
-        tasks.append(future)
-
-    # --- SONUÇLARI TOPLA ---
-    if tasks:
-        gathered = await asyncio.gather(*tasks, return_exceptions=True)
-        for item in gathered:
-            if isinstance(item, tuple) and len(item) == 2:
-                k, v = item
-                results[k] = v
-            elif isinstance(item, Exception):
-                # Hataları görünür hale getirin
-                logger.error(f"Kritik Metrik Hatası: {item}")
-
-    return results
-    
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-# Composite/Macro calculation (unchanged)
-# ------------------------------------------------------------
-
-# debug
-async def calculate_formula_scores(
-    source_values: Dict[str, float],
-    definitions: Dict[str, dict]
-) -> Dict[str, float]:
-
-    out = {}
-    formula_map: Dict[str, Any] = {}
-
-    logger.debug(f"calculate_formula_scores SOURCE VALUES: {source_values}")
-
-
-    # 1️⃣ Compile (cached)
-    for name, info in definitions.items():
-        
-        # DEBUG: VOL için özel log
-        if name == "vol":
-            deps = info.get("depends", [])
-            logger.debug(f"DEBUG VOL calculation - deps: {deps}")
-            logger.debug(
-                f"DEBUG VOL values - atr: {source_values.get('atr')}, "
-                f"hist_vol: {source_values.get('historical_volatility')}, "
-                f"garch: {source_values.get('garch_1_1')}, "
-                f"hurst: {source_values.get('hurst_exponent')}"
-            )
-        code = await _get_compiled_formula(info.get("formula"))
-        formula_map[name] = (code, info.get("depends", []))
-
-    # 2️⃣ Evaluate (NaN-robust)
-    for name, (code, deps) in formula_map.items():
-        if not code or not deps:
-            out[name] = float("nan")
-            continue
-
-        values = {}
-        valid_weights = 0.0
-
-        for dep in deps:
-            v = source_values.get(dep, float("nan"))
-            if not math.isnan(v):
-                values[dep] = float(v)
-                valid_weights += 1
-            else:
-                values[dep] = 0.0  # NaN kırıcı
-
-        if valid_weights == 0:
-            out[name] = float("nan")
-            continue
-
-        # regime factor (safe)
-        if "hurst_exponent" in values:
-            h = values["hurst_exponent"]
-            if not math.isnan(h):
-                values["regime_factor"] = max(-1.0, min(1.0, (h - 0.5) * 2.0))
-
-        out[name] = evaluate_compiled_formula(code, values)
-
-    return out
-
-
-
-
+            logger.error(f"Kritik hata: {symbol} analiz edilemedi: {e}")
+            return {"symbol": symbol, "status": "error"}
+            
 
 # ------------------------------------------------------------
-# Data fetcher: fetch multiple endpoints per-symbol in parallel
+# 3. UTILITIES & FORMULA ENGINE
+# ------------------------------------------------------------
+class FormulaEngine:
+    _ALLOWED_NODES = {
+        ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Load, ast.Add,
+        ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd, ast.Name,
+        ast.Constant, ast.Mod, ast.FloorDiv, ast.Call
+    }
+    _cache: Dict[str, Any] = {}
+    _lock = asyncio.Lock()
+
+    @classmethod
+    async def evaluate(cls, formula: str, context: Dict[str, float]) -> float:
+        code = await cls._get_compiled(formula)
+        if not code: return 0.0
+        safe_ctx = {k: (v if not math.isnan(v) else 0.0) for k, v in context.items()}
+        try:
+            return float(eval(code, {"__builtins__": {}}, safe_ctx))
+        except: return 0.0
+
+    @classmethod
+    async def _get_compiled(cls, formula: str):
+        if formula in cls._cache: return cls._cache[formula]
+        async with cls._lock:
+            try:
+                tree = ast.parse(formula, mode="eval")
+                for n in ast.walk(tree):
+                    if type(n) not in cls._ALLOWED_NODES: raise ValueError("Unsafe formula")
+                cls._cache[formula] = compile(tree, "<formula>", "eval")
+                return cls._cache[formula]
+            except: return None
+
+# ------------------------------------------------------------
+# 4. DATA FETCHING & PROCESSING
 # ------------------------------------------------------------
 class BinanceDataFetcher:
-    """Wrapper to fetch multiple endpoints for a symbol in parallel and merge into one DataFrame."""
     def __init__(self):
         self.aggregator = None
+        # Filtreleme kriterlerini sınıf düzeyinde tutmak yönetimi kolaylaştırır
+        self.excluded_keywords = ["UP", "DOWN", "BULL", "BEAR"]
+        self.stable_coins = ["USDC", "FDUSD", "TUSD", "DAI", "USDP", "EUR", "PAXG"]
 
-    async def initialize(self):
-        if self.aggregator is None:
+    async def get_aggregator(self):
+        if not self.aggregator:
             self.aggregator = await BinanceAggregator.get_instance()
         return self.aggregator
 
-    def normalize_depth(self, data, symbol, top_n=20):
+    async def get_top_volume_symbols(self, count: int = 10) -> List[str]:
         """
-        RAW depth verisini KORU, sadece formatını düzenle.
-        risk.py'nin beklediği [side, price, size] formatına çevir.
+        Market genelindeki hacimli sembolleri filtreleyerek getirir.
         """
-        bids = data.get("bids", [])[:top_n]
-        asks = data.get("asks", [])[:top_n]
-
-        if not bids or not asks:
-            return pd.DataFrame()
-
-        rows = []
-        
-        # Bids (highest to lowest)
-        for i, (price_str, size_str) in enumerate(bids):
-            try:
-                rows.append({
-                    'level': i,
-                    'side': 'bid',
-                    'price': float(price_str),
-                    'size': float(size_str),
-                    'symbol': symbol,
-                    'timestamp': pd.Timestamp.utcnow()
-                })
-            except (ValueError, TypeError):
-                continue
-        
-        # Asks (lowest to highest)
-        for i, (price_str, size_str) in enumerate(asks):
-            try:
-                rows.append({
-                    'level': i + len(bids),
-                    'side': 'ask',
-                    'price': float(price_str),
-                    'size': float(size_str),
-                    'symbol': symbol,
-                    'timestamp': pd.Timestamp.utcnow()
-                })
-            except (ValueError, TypeError):
-                continue
-        
-        if not rows:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(rows)
-        
-        # Doğru sıralama
-        df_bids = df[df['side'] == 'bid'].sort_values('price', ascending=False)
-        df_asks = df[df['side'] == 'ask'].sort_values('price', ascending=True)
-        
-        result = pd.concat([df_bids, df_asks], ignore_index=True)
-        result.set_index('timestamp', inplace=True)
-        
-        return result
-    
-    
-    # ================================
-    # 🔥 Yeni sistem — tek doğru endpoint çağrısı
-    # ================================
-    async def fetch_endpoint_with_params(self, symbol: str, endpoint_name: str, params: Dict) -> pd.DataFrame:
-        
-        await self.initialize()
         try:
-            data = await self.aggregator.get_public_data(
-                endpoint_name=endpoint_name,
-                **params
-            )
+            agg = await self.get_aggregator()
+            all_tickers = await agg.get_public_data(endpoint_name="ticker_24hr")
             
-            if endpoint_name == "klines":
-                return _klines_to_dataframe(data, symbol)
-                
-            elif endpoint_name == "depth":   # 🔥 BURADA DEĞİŞTİRDİK
-                # Artık RAW depth verisini formatlayarak döndürüyoruz
-                return self.normalize_depth(data, symbol, top_n=20)
-             
-            else:
-                return _endpoint_to_dataframe(data, symbol, endpoint_name)
-        except Exception as e:
-            logger.warning(f"fetch_endpoint failed: {symbol} {endpoint_name} -> {e}")
-            return pd.DataFrame()
-        
-    
-    # ================================
-    # 🔥 Tüm endpointleri paralel çek
-    # ================================
+            if not all_tickers:
+                return ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
-    async def fetch_all_for_symbol(self, symbol: str, endpoint_params: Dict[str, Dict]):
-        tasks = {
-            ep: asyncio.create_task(
-                self.fetch_endpoint_with_params(symbol, ep, params)
+            valid_pairs = []
+            for ticker in all_tickers:
+                symbol = ticker.get('symbol', '')
+                # Filtreleme mantığı
+                if (symbol.endswith('USDT') and 
+                    not any(k in symbol for k in self.excluded_keywords) and
+                    not any(s in symbol for s in self.stable_coins)):
+                    valid_pairs.append(ticker)
+
+            # Hacme göre sırala (quoteVolume: USDT bazlı hacim)
+            sorted_pairs = sorted(
+                valid_pairs, 
+                key=lambda x: float(x.get('quoteVolume', 0)), 
+                reverse=True
             )
-            for ep, params in endpoint_params.items()
-        }
 
-        results: Dict[str, pd.DataFrame] = {}
-        for ep, task in tasks.items():
+            return [t['symbol'] for t in sorted_pairs[:min(count, 40)]]
+
+        except Exception as e:
+            logger.error(f"❌ get_top_volume_symbols hatası: {e}")
+            return ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+    async def fetch_symbol_data(self, symbol: str, endpoint_params: Dict) -> pd.DataFrame:
+        agg = await self.get_aggregator()
+        
+        async def _fetch(ep, params):
             try:
-                df = await task
-                results[ep] = df if not df.empty else pd.DataFrame()
+                raw = await agg.get_public_data(endpoint_name=ep, **params)
+                if ep == "klines": return self._klines_to_df(raw, symbol)
+                return self._generic_to_df(raw, symbol, ep)
             except Exception as e:
-                logger.error(f"Failed to fetch {ep} for {symbol}: {e}")
-                results[ep] = pd.DataFrame()
+                logger.error(f"Fetch error {symbol} {ep}: {e}")
+                return pd.DataFrame()
 
-        # Merge all DataFrames
-        merged = None
-        for ep, df in results.items():
-            if df is None or df.empty:
-                continue
-
-            df_copy = df.copy()
-            cols = [c for c in df_copy.columns if c != "symbol"]
-            rename_map = {c: f"{c}__{ep}" for c in cols}
-            df_copy = df_copy.rename(columns=rename_map)
-
-            # timestamp varsa DatetimeIndex yap
-            if "timestamp" in df_copy.columns:
-                df_copy["timestamp"] = pd.to_datetime(
-                    df_copy["timestamp"], unit="ms", errors="coerce", utc=True
-                )
-                df_copy = df_copy.set_index("timestamp")
-            else:
-                # timestamp yoksa index reset ve tek seviyeye düşür
-                df_copy = df_copy.reset_index()
-                df_copy.index.name = "timestamp"
-
-            # Merge için tüm DataFrame'leri tek seviyeli index yap
-            if not isinstance(df_copy.index, pd.DatetimeIndex):
-                df_copy.index = pd.Index(df_copy.index, name="timestamp")
-
-            if merged is None:
-                merged = df_copy
-            else:
-                # Artık farklı seviyeler hatası olmayacak
-                merged = pd.merge(
-                    merged, df_copy, left_index=True, right_index=True, how="outer"
-                )
-
-                # Fazla symbol kolonlarını temizle
-                sym_cols = [c for c in merged.columns if c == "symbol" or c.endswith("__symbol")]
-                if len(sym_cols) > 1:
-                    for c in sym_cols[1:]:
-                        merged.drop(columns=[c], inplace=True, errors="ignore")
-
-        if merged is not None:
-            merged.sort_index(inplace=True)
-        else:
-            merged = pd.DataFrame()
-
-        return merged
-
-
-# ================================
-# 🔥 fetch_data_for_pipeline — endpoint param üretme & fetch yönetimi
-# ================================
-def filter_healthy_symbols(results):
-    healthy = {}
-
-    for sym, data in results.items():
-        s = data["scores"]
-
-        if s["LIQRISK"] > 0.5:
-            continue
-        if s["ENTROPY"] > 0.8:
-            continue
-        if s["REGIM"] < -0.3:
-            continue
-        if s["VOL"] > 0.6 and s["TREND"] <= 0:
-            continue
-
-        healthy[sym] = data
-
-    return healthy
-
-
-async def get_top_volume_symbols(count: int = 10):
-    """
-    En yüksek hacimli sembolleri filtreler ve getirir.
-    Performans için önce ilk 30-40 tanesini ayırır, 
-    sonra içinden istenen n tanesini döndürür.
-    """
-    try:
-        from utils.binance_api.binance_a import BinanceAggregator
-
-        # 1. Tüm 24s ticker verilerini çek
-        aggregator = await BinanceAggregator.get_instance()
+        tasks = [_fetch(ep, p) for ep, p in endpoint_params.items()]
+        dfs = await asyncio.gather(*tasks)
         
-        all_tickers = await aggregator.get_public_data(
-            endpoint_name="ticker_24hr"
-        )
+        merged_df = pd.DataFrame()
+        for df in dfs:
+            if df.empty: continue
+            merged_df = df if merged_df.empty else merged_df.combine_first(df)
+        return merged_df
+
+    """async def fetch_multi_market_data(self, symbols: List[str], interval="1h", limit=100):
+        tasks = []
+        for s in symbols:
+            p = {"klines": {"symbol": s, "interval": interval, "limit": limit}}
+            tasks.append(self.fetch_symbol_data(s, p))
         
-        if not all_tickers:
-            return ["BTCUSDT", "ETHUSDT", "BNBUSDT"]  # fallback
-
-        # 2. Sadece USDT çiftlerini ve 'sağlıklı' olanları filtrele
-        # (UP, DOWN, BULL, BEAR gibi kaldıraçlı tokenları eliyoruz)      
-        excluded_keywords = ["UP", "DOWN", "BULL", "BEAR"]
-        stable_coins = ["USDC", "FDUSD", "USD1", "TUSD", "DAI", "USDP", "EUR", "AEUR", "PAXG"]
-        valid_pairs = []
-
-        for ticker in all_tickers:
-            symbol = ticker.get('symbol', '')
-            if not symbol:
-                continue
-                
-            # USDT ile bitiyor mu?
-            # Kaldıraçlı token içermiyor mu?
-            # Diğer stable coin'leri içermiyor mu?
-            if (symbol.endswith('USDT') and 
-                not any(k in symbol for k in excluded_keywords) and
-                not any(s in symbol for s in stable_coins)):
-                valid_pairs.append(ticker)
-
-        # 3. Hacme (quoteVolume) göre büyükten küçüğe sırala
-        # quoteVolume = USDT cinsinden toplam hacim
-        sorted_pairs = sorted(
-            valid_pairs, 
-            key=lambda x: float(x.get('quoteVolume', 0)), 
-            reverse=True
-        )
-
-        # 4. İlk 40 tanesini "Güvenli Havuz" olarak belirle (Performans Sınırı)
-        safe_pool = sorted_pairs[:40] if len(sorted_pairs) > 40 else sorted_pairs
-
-        # 5. Kullanıcının istediği 'count' kadarını bu 40 içinden al
-        final_count = min(count, len(safe_pool))
-        final_symbols = [t['symbol'] for t in safe_pool[:final_count]]
-
-        # Eğer hiç sembol kalmadıysa fallback
-        if not final_symbols:
-            return ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
-            
-        return final_symbols
-
-    except Exception as e:
-        logger.error(f"❌ get_top_volume_symbols hatası: {e}")
-        return ["BTCUSDT", "ETHUSDT", "BNBUSDT"]  # Hata anında fallback
-
-
-
-
-
-   
-async def fetch_data_for_pipeline(symbol, metric_defs, interval="1h", limit=500):
-    # Eğer limit belirtilmezse Binance varsayılan olarak az veri gönderebilir
-    # Metriklerin "ısınması" için en az 100 bar çekmelisiniz
-
-    is_single = isinstance(symbol, str)
-    symbols = [symbol] if is_single else symbol
-
-    fetcher = BinanceDataFetcher()
-    await fetcher.initialize()
-
-    # 1) Tüm metriklerden endpoint → param factory çıkar
-    endpoint_factories = {}
-    for mdef in metric_defs.values():
-        for ep, factory in mdef.get("endpoint_params", {}).items():
-            endpoint_factories[ep] = factory
-
-    # 2) Her symbol için parametreleri oluştur
-    tasks = {}
-    for sym in symbols:
-        params_for_symbol = {
-            ep: factory(sym, interval, limit)
-            for ep, factory in endpoint_factories.items()
-        }
-
-        tasks[sym] = asyncio.create_task(
-            fetcher.fetch_all_for_symbol(sym, params_for_symbol)
-        )
-
-    # 3) Sonuçları topla
-    results = {}
-    for sym, task in tasks.items():
-        try:
-            df = await task
-            results[sym] = df
-        except Exception as e:
-            logger.error(f"Failed fetch for {sym}: {e}")
-            results[sym] = pd.DataFrame()
-
-    return results[symbol] if is_single else results
-
-
-def _klines_to_dataframe(klines: List, symbol: str) -> pd.DataFrame:
-    if not klines:
-        logger.warning(f"Klines empty for {symbol}")
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(klines, columns=[
-        'timestamp', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-        'taker_buy_quote', 'ignore'
-    ])
-    
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce', utc=True)
-    df.set_index('timestamp', inplace=True)
-    
-    # HEP SINIR NUMERIC KOLONLAR
-    numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'quote_volume']
-    for c in numeric_cols:
-        df[c] = pd.to_numeric(df[c], errors='coerce')
-    
-    # taker_buy_base ve taker_buy_quote da numeric olmalı
-    if 'taker_buy_base' in df.columns:
-        df['taker_buy_base'] = pd.to_numeric(df['taker_buy_base'], errors='coerce')
-    if 'taker_buy_quote' in df.columns:
-        df['taker_buy_quote'] = pd.to_numeric(df['taker_buy_quote'], errors='coerce')
-    
-    # trades ve close_time integer
-    if 'trades' in df.columns:
-        df['trades'] = pd.to_numeric(df['trades'], errors='coerce').fillna(0).astype(int)
-    if 'close_time' in df.columns:
-        df['close_time'] = pd.to_numeric(df['close_time'], errors='coerce').fillna(0).astype(int)
-    
-    df['symbol'] = symbol
-    
-    # DEBUG: Tip kontrolü
-    logger.debug(f"DataFrame dtypes after conversion:\n{df.dtypes}")
-    
-    return df
-
-
-    
-def _endpoint_to_dataframe(data: Any, symbol: str, endpoint_name: str) -> pd.DataFrame:
+        results = await asyncio.gather(*tasks)
+        return pd.concat(results) if results else pd.DataFrame()
     """
-    Generic normalizer for endpoints other than klines.
-    Tries to infer timestamp column -> index; otherwise returns table with 'value__endpoint' if scalar list given.
-    """
-    if data is None:
-        return pd.DataFrame()
-    # If data already a DataFrame-like
-    if isinstance(data, pd.DataFrame):
-        df = data.copy()
-        if 'timestamp' in df.columns:
+    # a_core.py içindeki BinanceDataFetcher sınıfının metodunu bu şekilde güncelleyin:
+
+    async def fetch_multi_market_data(self, symbols: List[str], interval="1h", limit=100):
+        """
+        Rate limit (IP engeli) yememek için sembolleri 
+        küçük gecikmelerle (throttle) çeker.
+        """
+        results = []
+        
+        for symbol in symbols:
             try:
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce', utc=True)
-                df.set_index('timestamp', inplace=True)
-            except Exception:
-                pass
-        df['symbol'] = symbol
-        return df
+                # Her sembol için klines parametrelerini hazırla
+                p = {"klines": {"symbol": symbol, "interval": interval, "limit": limit}}
+                
+                # Tek bir sembolün verisini çek
+                df = await self.fetch_symbol_data(symbol, p)
+                
+                if not df.empty:
+                    results.append(df)
+                
+                # 🔥 KRİTİK DÜZELTME: Her istekten sonra 200ms bekle.
+                # Bu sayede saniyede en fazla 5 istek gider (Binance limiti saniyede 10-50 arasıdır).
+                # Botun kitlenmesini önleyen ana parça burasıdır.
+                await asyncio.sleep(0.2)
+                
+            except Exception as e:
+                logger.error(f"⚠️ {symbol} verisi çekilirken hata oluştu: {e}")
+                continue
 
+        # Sonuçları birleştir
+        if results:
+            return pd.concat(results)
+        else:
+            logger.warning("❌ Hiçbir sembolden veri çekilemedi!")
+            return pd.DataFrame()
+            
+
+
+    def _klines_to_df(self, klines, symbol):
+        df = pd.DataFrame(klines, columns=['ts','o','h','l','c','v','ct','qv','tr','tbb','tbq','i'])
+        df['ts'] = df['ts'] // 1000 
+        df['timestamp'] = pd.to_datetime(df['ts'], unit='s', utc=True)
+        df.set_index('timestamp', inplace=True)
+        cols = {'o':'open', 'h':'high', 'l':'low', 'c':'close', 'v':'volume'}
+        return df.rename(columns=cols).apply(pd.to_numeric, errors='coerce').assign(symbol=symbol)
+
+    def _generic_to_df(self, data, symbol, ep):
+        df = pd.DataFrame(data)
+        if 'timestamp' in df.columns:
+            df['ts'] = df['timestamp'] // 1000
+            df['timestamp'] = pd.to_datetime(df['ts'], unit='s', utc=True)
+            df.set_index('timestamp', inplace=True)
+        return df.add_suffix(f"__{ep}").assign(symbol=symbol)
+     
+# ------------------------------------------------------------
+# 5. CORE ANALYSIS ENGINE - ana işlemci, 
+# diğerleri class olarak yazılır, buraya eklenir
+# ------------------------------------------------------------
+class CoreAnalysisEngine:
+    def __init__(self):
+        self.fetcher = BinanceDataFetcher()
+        self.market_engine = MarketContextEngine()
+        self.resolver = get_default_resolver()
+        self.cpu_executor = concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count())
+        self.io_executor = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+
+    async def get_alt_power(self, basket: List[str] = INDEX_BASKET):
+        """Sadece AP sonucunu döner. Veriyi DB'den çeker."""
+        from analysis.db_loader import load_latest_snapshots # Import burada veya üstte
+        
+        # 1. Gerekli tüm sembolleri (Sepet + BTC) belirle
+        symbols_to_load = list(set(basket + ["BTCUSDT"]))
+        
+        # 2. DB'den son 50 snapshot'ı çek (funding ve OI burada var)
+        # Bu fonksiyon senkron olduğu için bir executor içinde çalıştırmak daha sağlıklıdır
+        loop = asyncio.get_running_loop()
+        df_raw = await loop.run_in_executor(None, load_latest_snapshots, symbols_to_load, 50)
+        
+        if df_raw.empty:
+            logger.warning("⚠️ Alt Power için DB'den veri gelmedi!")
+            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0, "error": "Veri yok"}
+
+        return self.market_engine.calculate_alt_power(df_raw, basket)
+        
+    async def run_full_analysis(self, symbols: Union[str, List[str]], metrics: List[str] = None):
+        """Hem AP hem de teknik analiz sonuçlarını birleştirir."""
+        symbols = [symbols] if isinstance(symbols, str) else symbols
+        
+        # 1. Market Context (AP) paralel çalışsın
+        ap_task = asyncio.create_task(self.get_alt_power())
+        
+        # 2. Teknik Analizler
+        analysis_tasks = [self._analyze_single(s, metrics or ["trend"], "1h", 100) for s in symbols]
+        analyses = await asyncio.gather(*analysis_tasks)
+        
+        ap_results = await ap_task
+        
+        return {
+            "market_context": ap_results,
+            "results": {s: r for s, r in zip(symbols, analyses)}
+        }
+        
+    async def _analyze_single(self, symbol: str, metrics: List[str], interval: str, limit: int):
+        try:
+            # 1. Resolve & Fetch
+            score_map = resolve_scores_to_metrics(metrics, COMPOSITES, MACROS)
+            flat_metrics = list({m for sub in score_map.values() for m in sub})
+            metric_defs = self.resolver.resolve_multiple_definitions(flat_metrics)
+            
+            ep_params = {}
+            for mdef in metric_defs.values():
+                for ep, factory in mdef.get("endpoint_params", {}).items():
+                    ep_params[ep] = factory(symbol, interval, limit)
+
+            df = await self.fetcher.fetch_symbol_data(symbol, ep_params)
+            if df.empty: return {"symbol": symbol, "error": "No data"}
+
+            # 2. Calculate Raw Metrics
+            calc_tasks = []
+            for name, mdef in metric_defs.items():
+                calc_tasks.append(self._calculate_metric(name, mdef, df))
+            
+            metric_results = dict(await asyncio.gather(*calc_tasks))
+
+            # 3. Calculate Composites & Macros
+            comp_scores = await self._calculate_formulas(metric_results, COMPOSITES)
+            macro_scores = await self._calculate_formulas(comp_scores, MACROS)
+
+            return {
+                "symbol": symbol,
+                "timestamp": datetime.utcnow().isoformat(),
+                "scores": {**comp_scores, **macro_scores},
+                "raw_metrics": metric_results
+            }
+        except Exception as e:
+            logger.error(f"Pipeline error for {symbol}: {e}")
+            return {"symbol": symbol, "error": str(e)}
+
+    async def _calculate_metric(self, name, mdef, df):
+        func = mdef.get("function")
+        params = mdef.get("default_params", {})
+        exec_type = mdef.get("execution_type", "sync")
+        
+        # Data preparation (Sadece gerekli kolonlar)
+        prep_df = prepare_data(df, mdef)
+        
+        try:
+            if exec_type == "async":
+                raw = await func(prep_df, **params)
+            else:
+                loop = asyncio.get_running_loop()
+                executor = self.cpu_executor if mdef.get("metadata", {}).get("category") == "advanced" else self.io_executor
+                raw = await loop.run_in_executor(executor, partial(func, prep_df, **params))
+            
+            val = extract_final_value(raw, name)
+            return name, float(np.clip(val, -1, 1)) if not math.isnan(val) else 0.0
+        except:
+            return name, 0.0
+
+    async def _calculate_formulas(self, source, definitions):
+        results = {}
+        for name, info in definitions.items():
+            formula = info.get("formula")
+            results[name] = await FormulaEngine.evaluate(formula, source)
+        return results
+
+
+# ------------------------------------------------------------
+# 6. 'ap' işlemlerini (Alt Power) yöneten motor.
+class MarketContextEngine:
+    """
+    Eski koddaki 'ap' işlemlerini (Alt Power) yöneten motor.
+    Sepet bazlı (Alt vs BTC, OI Trend vb.) analizleri yapar.
+    API'den veri çekmez
+    veritabanını okuyan db_loader.py modülünü kullan
+    """
     
-    # If list of dicts
-    if isinstance(data, list):
+    @staticmethod
+    def scale_0_100(value: float, min_val: float, max_val: float) -> float:
+        """Sabit ölçekli normalizasyon - İşlev korundu."""
+        if min_val == max_val: return 50.0
+        norm = (value - min_val) / (max_val - min_val)
+        return float(np.clip(norm * 100, 0, 100))
+
+    def calculate_alt_power(self, df_raw: pd.DataFrame, INDEX_REPORT: List[str]) -> Dict[str, float]:
+        """
+        Paylaştığınız 'calculate_alt_power' fonksiyonunun modernize edilmiş, 
+        hata toleransı artırılmış hali.
+        """
+        if df_raw.empty:
+            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0}
+
+        # --- 1. ZAMAN SENKRONİZASYONU ---
+        df = df_raw.copy()
+        # Saniyeleri dakikaya yuvarla (İşlev korundu)
+        df['ts'] = (df['ts'] // 60) * 60 
+        
+        # Veriyi temizle ve grupla
+        df_clean = df.groupby(['ts', 'symbol']).agg({
+            'price': 'last',           # max yerine last daha güvenli fiyattır
+            'open_interest': 'max',
+            'funding_rate': 'last'
+        }).reset_index().sort_values('ts')
+
+        unique_ts = df_clean['ts'].unique()
+        if len(unique_ts) < 2:
+            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0, "status": "pending"}
+
+        # --- 2. PIVOT TABLOLAR (Vektörel Hesaplama İçin) ---
+        prices_pivot = df_clean.pivot(index="ts", columns="symbol", values="price").ffill()
+        
+        # --- 3. HESAPLAMALAR ---
+        
+        # A. Alt vs BTC (Short)
+        v_btc = 50.0
+        if "BTCUSDT" in prices_pivot.columns:
+            returns = prices_pivot.pct_change(1).iloc[-1]
+            btc_ret = returns["BTCUSDT"]
+            available_alts = [s for s in INDEX_REPORT if s in returns.index]
+            if available_alts:
+                avg_alt_ret = returns[available_alts].mean()
+                v_btc = self.scale_0_100(avg_alt_ret - btc_ret, -0.005, 0.005)
+
+        # B. Alt Momentum (Short Term Strength)
+        v_short = 50.0
+        if len(prices_pivot) >= 5:
+            returns_5 = prices_pivot.pct_change(5).iloc[-1]
+            available_alts = [s for s in INDEX_REPORT if s in returns_5.index]
+            if available_alts:
+                v_short = self.scale_0_100(returns_5[available_alts].mean(), -0.02, 0.02)
+
+        # C. Long Term Strength (OI & Funding)
+        v_long = 50.0
         try:
-            df = pd.DataFrame(data)
-
-            # -------------------------------
-            # 🔥 BINANCE OPEN INTEREST PATCH
-            # -------------------------------
-            if endpoint_name == "open_interest_hist":
-                if "sumOpenInterest" in df.columns:
-                    df["open_interest"] = pd.to_numeric(
-                        df["sumOpenInterest"], errors="coerce"
-                    )
-            # -------------------------------
-
-            if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(
-                    df['timestamp'], unit='ms', errors='coerce', utc=True
-                )
-                df.set_index('timestamp', inplace=True)
-
-            df['symbol'] = symbol
-            return df
-
+            oi_pivot = df_clean.pivot(index="ts", columns="symbol", values="open_interest").ffill()
+            available_alts = [s for s in INDEX_REPORT if s in oi_pivot.columns]
+            
+            if available_alts and len(oi_pivot) >= 2:
+                # OI Değişimi
+                oi_change = (oi_pivot[available_alts].iloc[-1] / oi_pivot[available_alts].iloc[0]) - 1
+                oi_score = self.scale_0_100(oi_change.mean(), -0.05, 0.05)
+                
+                # Funding
+                fund_avg = df_clean[df_clean['symbol'].isin(available_alts)].groupby('symbol')['funding_rate'].last().mean()
+                fund_score = self.scale_0_100(fund_avg, 0.05, -0.01) # Ters skala
+                
+                v_long = (oi_score * 0.7) + (fund_score * 0.3)
         except Exception:
             pass
 
-
-
-    # If a dict with keys -> try to create series
-    if isinstance(data, dict):
-        try:
-            # flatten scalar dicts to DataFrame with single timestamp=now
-            s = pd.Series(data)
-            df = pd.DataFrame([s])
-            df.index = pd.to_datetime([pd.Timestamp.utcnow()])
-            df['symbol'] = symbol
-            return df
-        except Exception:
-            pass
-
-    # If scalar or unknown -> return small DF with "value"
-    try:
-        return pd.DataFrame([{ 'value': data, 'symbol': symbol }], index=[pd.Timestamp.utcnow()])
-    except Exception:
-        return pd.DataFrame()
+        return {
+            "alt_vs_btc_short": round(float(v_btc), 1),
+            "alt_short_term": round(float(v_short), 1),
+            "coin_long_term": round(float(v_long), 1),
+        }
+     
 
 # ------------------------------------------------------------
-# Verify metric definitions (unchanged)
+# 7. Handler burayı çağıracak
+async def process_pipeline(
+    target: Any, 
+    cmd: str = "/t", 
+    metrics: List[str] = None
+) -> List[Dict]:
+    """
+    Handler'ın beklediği eski arayüzü, yeni modern motora bağlar.
+    """
+    # 1. symbols listesini belirle
+    symbols = []
+    if target is None:
+        symbols = WATCHLIST
+    elif target == "INDEX_BASKET":
+        symbols = INDEX_BASKET
+    elif isinstance(target, int):
+        
+        # HACİMLİ N COİN BİLGİSİ
+        # Sınıfı çağırıyoruz ve içindeki metodu kullanıyoruz
+        symbols = await _engine.fetcher.get_top_volume_symbols(target)
+        # -----------------
+
+    else:
+        if isinstance(target, str):
+            symbols = [target if target.endswith("USDT") else f"{target}USDT"]
+        else:
+            symbols = [s if s.endswith("USDT") else f"{s}USDT" for s in target]
+
+
+    # 2. Hangi metrikleri hesaplayacağız?
+    # metrics parametresi handler'dan geliyor, onu kullan!
+    if metrics is None or not metrics:
+        # Eğer handler metrik göndermedi, default değer kullan
+        metrics = ["core", "regf", "vols"]
+    
+    # 3. Motoru Çalıştır - SADECE İSTENEN METRİKLERİ HESAPLA
+    raw_results = await _engine.run_full_analysis(symbols, metrics=metrics)
+
+    # 4. Sonuçları formatla - BASİT VERSİYON
+    results = []
+    
+    # Motorun dönüş formatını anla
+    if isinstance(raw_results, dict) and "symbol" in raw_results:
+        # Tek sembol dönüşü: {symbol: "...", scores: {...}}
+        processed = {raw_results["symbol"]: raw_results}
+    else:
+        # Çoklu sembol dönüşü: {symbol1: {...}, symbol2: {...}}
+        processed = raw_results
+
+    for symbol in symbols:
+        data = processed.get(symbol, {})
+        
+        if "error" in data or not data:
+            results.append({"symbol": symbol, "error": "Analiz başarısız"})
+            continue
+            
+        scores = data.get("scores", {})
+        
+        # Handler'ın istediği her metrik için değer al
+        result_item = {"symbol": symbol}
+        for metric in metrics:
+            # Core'daki scores dict'inden doğrudan al
+            # İsimler aynı olduğu için eşleme gerekmiyor!
+            result_item[metric] = scores.get(metric, 0.0)
+        
+        results.append(result_item)
+        
+    return results
+    
+ 
+ 
 # ------------------------------------------------------------
-def verify_metric_definitions(metric_defs: Dict[str, Dict]) -> Dict[str, bool]:
+# 8. HELPERS (Globalized for Pickleability)
+# ------------------------------------------------------------
+def prepare_data(df, mdef):
+    req_cols = mdef.get("required_columns", [])
+    if not req_cols: return df
+    # Basit eşleştirme: close -> close__klines veya close
+    available = {}
+    for c in req_cols:
+        if c in df.columns: available[c] = df[c]
+        else:
+            match = [col for col in df.columns if col.startswith(f"{c}__")]
+            if match: available[c] = df[match[0]]
+    return pd.DataFrame(available)
+
+def extract_final_value(raw, name):
+    if isinstance(raw, (int, float, np.number)): return float(raw)
+    if isinstance(raw, pd.Series): return float(raw.iloc[-1]) if not raw.empty else float('nan')
+    if isinstance(raw, dict): return float(raw.get('value', raw.get(name, 0)))
+    return 0.0
+
+def resolve_scores_to_metrics(metrics, comp_map, macro_map):
     out = {}
-    for name, d in metric_defs.items():
-        ok = isinstance(d, dict) and d.get("function") is not None and d.get("execution_type") in ("sync", "async")
-        out[name] = bool(ok)
-        if not ok:
-            logger.debug(f"Metric definition invalid: {name}")
+    for m in metrics:
+        if m in comp_map: out[m] = comp_map[m]["depends"]
+        elif m in macro_map:
+            deps = []
+            for d in macro_map[m]["depends"]:
+                deps.extend(comp_map.get(d, {}).get("depends", [d]))
+            out[m] = list(set(deps))
+        else: out[m] = [m]
     return out
 
-def get_metric_metadata(metric_defs: Dict) -> Dict[str, Dict]:
-    meta = {}
-    for name, d in metric_defs.items():
-        if not d:
-            continue
-        meta[name] = {
-            "data_model": d.get("data_model", "unknown"),
-            "execution_type": d.get("execution_type", "unknown"),
-            "category": d.get("metadata", {}).get("category", "unknown"),
-            "module": d.get("metadata", {}).get("module_name", "unknown"),
-        }
-    return meta
-
 # ------------------------------------------------------------
-# Single-symbol pipeline (updated order: resolve defs -> fetch endpoints -> calc)
+# EXPORTED INTERFACE (Dışarıya açılan kapı)
 # ------------------------------------------------------------
+_engine = CoreAnalysisEngine()
 
-async def _run_single_pipeline(
-    symbol: str,
-    requested_scores: List[str],
-    raw_df: Optional[pd.DataFrame] = None,
-    interval: str = "1h",
-    limit: int = 500
-) -> Dict[str, Any]:
+# ---Dışarıdan kolay erişim için sarmalayıcı (wrapper) metod ---
+async def get_alt_power():
+    return await _engine.get_alt_power()
 
-    logger.info(f"Pipeline start: {symbol}")
-
-    # -------------------------------------------------
-    # 1) Resolve required metrics
-    # -------------------------------------------------
-    score_to_metrics = resolve_scores_to_metrics(requested_scores, COMPOSITES, MACROS)
-    all_required_metrics = sorted(
-        {m for metrics in score_to_metrics.values() for m in metrics}
-    )
-
-    resolver = get_default_resolver()
-    metric_defs = resolver.resolve_multiple_definitions(all_required_metrics)
-
-
-    logger.debug(f"All required metrics: {all_required_metrics}")
-    logger.debug(f"Metric defs keys: {list(metric_defs.keys())}")
-
-
-    # validate & filter invalid metric defs
-    valid_map = verify_metric_definitions(metric_defs)
+async def get_top_volume_symbols(count: int = 10) -> List[str]:
+    return await _engine.fetcher.get_top_volume_symbols(count)
     
-    logger.debug(f"Valid metrics: {[k for k, v in valid_map.items() if v]}")
-    logger.debug(f"Invalid metrics: {[k for k, v in valid_map.items() if not v]}")
-    
-    
-    metric_defs = {k: v for k, v in metric_defs.items() if valid_map.get(k)}
+async def run_full_analysis(symbols, metrics=None):
+    return await _engine.run_full_analysis(symbols, metrics)
 
-    if not metric_defs:
-        return {"error": "No valid metric definitions", "symbol": symbol}
-
-    # -------------------------------------------------
-    # 2) Collect required endpoints (metadata only)
-    # -------------------------------------------------
-    required_endpoints_set: Set[str] = set()
-
-    for m_info in metric_defs.values():
-        for ep in m_info.get("required_endpoints", []) or []:
-            required_endpoints_set.add(ep)
-
-    # Heuristic: OHLCV ihtiyacı varsa klines garanti
-    if "klines" not in required_endpoints_set:
-        for m_info in metric_defs.values():
-            req_cols = m_info.get("required_columns", []) or []
-            if any(c in ("open", "high", "low", "close", "volume", "returns") for c in req_cols):
-                required_endpoints_set.add("klines")
-                break
-
-    required_endpoints = sorted(required_endpoints_set)
-
-    # -------------------------------------------------
-    # 3) Fetch data (merged)
-    # -------------------------------------------------
-    if raw_df is None:
-        try:
-            merged_df = await fetch_data_for_pipeline(
-                symbol, metric_defs, interval, limit
-            )
-        except Exception as e:
-            logger.error(f"Fetch failed for {symbol}: {e}")
-            return {"error": f"Data fetch failed: {e}", "symbol": symbol}
-    else:
-        merged_df = raw_df
-
-    if merged_df is None or merged_df.empty:
-        return {"error": "No data", "symbol": symbol}
-
-    # ❌ GLOBAL COLUMN NORMALIZATION YOK
-    # prepare_data + required_columns tek doğru yol
-
-    # -------------------------------------------------
-    # 4) Calculate metrics
-    # -------------------------------------------------
-    metric_results = await calculate_metrics(
-        merged_df,
-        metric_defs,
-        max_workers=_DEFAULT_MAX_WORKERS
-    )
-
-    # -------------------------------------------------
-    # 5) Composite & macro scores
-    # -------------------------------------------------
-    composite_scores = await calculate_formula_scores(metric_results, COMPOSITES)
-    macro_scores = await calculate_formula_scores(composite_scores, MACROS)
-
-    # -------------------------------------------------
-    # 6) Final score assembly
-    # -------------------------------------------------
-    final_scores: Dict[str, float] = {}
-
-    for s in requested_scores:
-        if s in composite_scores:
-            final_scores[s] = composite_scores[s]
-        elif s in macro_scores:
-            final_scores[s] = macro_scores[s]
-        elif s in metric_results:
-            final_scores[s] = metric_results[s]
-        else:
-            final_scores[s] = float("nan")
-
-    result = {
-        "symbol": symbol,
-        "timestamp": datetime.utcnow().isoformat(),
-        "scores": final_scores,
-        "metrics": metric_results,
-        "composites": composite_scores,
-        "macros": macro_scores,
-        "metadata": {
-            "metrics_count": len(metric_results),
-            "valid_metrics": list(metric_results.keys()),
-            "metric_defs_summary": get_metric_metadata(metric_defs),
-            "required_endpoints": required_endpoints,
-        },
-    }
-
-    logger.info(f"Pipeline done: {symbol}")
-    return result
-
-
-# ------------------------------------------------------------
-# Public run_pipeline (unchanged behavior, supports single/batch)
-# ------------------------------------------------------------
-async def run_pipeline(symbol: Union[str, List[str]], requested_scores: List[str], raw_data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]] = None, **kwargs) -> Union[Dict[str, Any], Dict[str, Dict[str, Any]]]:
-    if isinstance(symbol, list):
-        raw_map = raw_data if isinstance(raw_data, dict) else {}
-        tasks = [asyncio.create_task(_run_single_pipeline(sym, requested_scores, raw_map.get(sym), **kwargs)) for sym in symbol]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-        return {sym: res for sym, res in zip(symbol, results)}
-    else:
-        return await _run_single_pipeline(symbol, requested_scores, raw_data, **kwargs)
-
-def run_pipeline_sync(symbol: Union[str, List[str]], requested_scores: List[str], raw_data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]] = None, timeout: int = 30, **kwargs) -> Union[Dict[str, Any], Dict[str, Dict[str, Any]]]:
-    try:
-        return asyncio.run(run_pipeline(symbol, requested_scores, raw_data, **kwargs))
-    except Exception as e:
-        logger.error(f"run_pipeline_sync failed: {e}")
-        return {"error": str(e), "symbol": symbol}
-
-# ------------------------------------------------------------
-# Debug helpers etc. (unchanged)
-# ------------------------------------------------------------
-async def debug_metric_calculation(metric_name: str, data: pd.DataFrame) -> Dict:
-    resolver = get_default_resolver()
-    def_info = resolver.resolve_metric_definition(metric_name)
-    info = {
-        "metric_name": metric_name,
-        "data_model": def_info.get("data_model"),
-        "execution_type": def_info.get("execution_type"),
-        "required_columns": def_info.get("required_columns", []),
-        "available_columns": list(data.columns),
-        "normalization": def_info.get("normalization", {}),
-        "category": def_info.get("metadata", {}).get("category"),
-    }
-    func = def_info.get("function")
-    if func:
-        params = def_info.get("default_params", {})
-        try:
-            if def_info.get("execution_type") == "async":
-                raw = await func(data, **params)
-            else:
-                raw = func(data, **params)
-            info["raw_result_type"] = type(raw).__name__
-            info["final_value"] = extract_final_value(raw, metric_name)
-        except Exception as e:
-            info["error"] = str(e)
-    return info
-
-def get_system_status() -> Dict:
-    resolver = get_default_resolver()
-    all_metrics = resolver.get_available_metrics()
-    sample = {}
-    for m in ["ema", "rsi", "macd"]:
-        try:
-            d = resolver.resolve_metric_definition(m)
-            sample[m] = {"data_model": d.get("data_model"), "execution_type": d.get("execution_type")}
-        except Exception:
-            pass
-    return {
-        "total_metrics": len(all_metrics),
-        "sample_metrics": sample,
-        "default_data_model": DEFAULT_DATA_MODEL,
-        "executor_workers": _DEFAULT_MAX_WORKERS
-    }
-
-
-# -------
-async def test_open_interest_hist_raw():
-    from utils.binance_api.binance_a import BinanceAggregator
-
-    agg = await BinanceAggregator.get_instance()
-
-    print("👉 open_interest_hist RAW TEST START")
-
-    data = await agg.get_public_data(
-        endpoint_name="open_interest_hist",
-        symbol="BTCUSDT",
-        period="1h",
-        limit=5
-    )
-
-    print("👉 RESPONSE TYPE:", type(data))
-    print("👉 RESPONSE:", data)
+if __name__ == "__main__":
+    # Test kullanım
+    async def test():
+        res = await run_full_analysis("BTCUSDT", metrics=["trend"])
+        print(res)
+    asyncio.run(test())
