@@ -31,7 +31,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # Proje modülleri
-from config import config, Settings
+from config import config, Settings, resolve_bot_mode, BotMode
 
 from utils.handler_loader import HandlerLoader
 from utils.apikey_manager import APIKeyManager, AlarmManager, BaseManager, TradeSettingsManager
@@ -935,43 +935,33 @@ async def app_entry():
         
         # ✅ Lifespan ile bileşenleri başlat
         print("DEBUG: Starting lifespan...")
-        async with lifespan(config):  # config instance'ını geç
-            print("DEBUG: Lifespan completed successfully")
+        
+        async with lifespan(config):
 
-            if bot_mode == "webhook":
-                # ✅ WEBHOOK_URL kontrolü ekle
-                if not config.WEBHOOK_URL:
-                    logger.error("❌ WEBHOOK_MODE aktif ama WEBHOOK_URL boş!")
-                    logger.error(f"   WEBHOOK_HOST: {config.WEBHOOK_HOST}")
-                    logger.error(f"   TELEGRAM_TOKEN: {'***' + config.TELEGRAM_TOKEN[-4:] if config.TELEGRAM_TOKEN else 'MISSING'}")
-                    raise RuntimeError("Webhook URL configuration missing")
-                
-                app = await create_app()  # ✅ Artık çalışacak 
-                        
-                        
-                # ✅ WEBHOOK URL bilgisini logla
-                if config.WEBHOOK_URL:
-                    print(f"DEBUG: Webhook URL: {config.WEBHOOK_URL}")
-                
-                # ✅ Bekle
-                print("DEBUG: Waiting for shutdown...")
+            mode = resolve_bot_mode(config)
+            logger.info(f"🚀 Bot mode resolved as: {mode}")
+
+            mode = resolve_bot_mode(config)
+            if mode == BotMode.WEBHOOK:
+                app = await create_app()
+
+                runner = web.AppRunner(app)
+                await runner.setup()
+
+                port = int(os.getenv("PORT", config.PORT))
+                site = web.TCPSite(runner, "0.0.0.0", port)
+                await site.start()
+
+                logger.info(f"🌐 HTTP server listening on :{port}")
                 await shutdown_event.wait()
-                
+
             else:
-                # ✅ POLLING MODU
-                print("DEBUG: Polling mode - starting polling...")
-                
-                # CRITICAL: Webhook'u temizle
-                try:
-                    await bot.delete_webhook(drop_pending_updates=True)
-                    print("DEBUG: Webhook cleared successfully")
-                except Exception as e:
-                    print(f"DEBUG: Webhook cleanup warning: {e}")
-                
-                print("DEBUG: Starting dispatcher polling...")
+                await bot.delete_webhook(drop_pending_updates=True)
                 await dispatcher.start_polling(bot)
-                print("DEBUG: Polling started successfully")
-                
+
+
+
+           
     except Exception as e:
         print(f"DEBUG: Fatal error in app_entry: {e}")
         import traceback
