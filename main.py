@@ -31,7 +31,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # Proje modülleri
-from config import config, Settings, resolve_bot_mode, BotMode
+from config import config, Settings
 
 from utils.handler_loader import HandlerLoader
 from utils.apikey_manager import APIKeyManager, AlarmManager, BaseManager, TradeSettingsManager
@@ -918,9 +918,8 @@ async def background_market_collector():
 # ---------------------------------------------------------------------
 # OPTIMIZED MAIN ENTRY POINT - CONFIG TABANLI
 # ---------------------------------------------------------------------
-
-async def app_entry():
-    """Config tabanlı çift modlu main entry"""
+# Config tabanlı çift modlu main entry
+"""async def app_entry():
     print("DEBUG: app_entry started")
     
     global runner, bot, dispatcher
@@ -930,38 +929,34 @@ async def app_entry():
         print("DEBUG: Configuration loaded from config.py")
         
         # ✅ Config'ten modu oku (BOT_MODE computed property'yi kullan)
-        bot_mode = config.BOT_MODE  # Direkt config.BOT_MODE kullan
-        print(f"DEBUG: Starting in {bot_mode} mode")
+        # bot_mode = config.BOT_MODE  # Direkt config.BOT_MODE kullan
+        # print(f"DEBUG: Starting in {bot_mode} mode")
         
         # ✅ Lifespan ile bileşenleri başlat
         print("DEBUG: Starting lifespan...")
-        
+
         async with lifespan(config):
 
-            mode = resolve_bot_mode(config)
-            logger.info(f"🚀 Bot mode resolved as: {mode}")
+            port_env = os.getenv("PORT")
 
-            mode = resolve_bot_mode(config)
-            if mode == BotMode.WEBHOOK:
+            # 🔹 RENDER
+            if port_env:
                 app = await create_app()
 
                 runner = web.AppRunner(app)
                 await runner.setup()
 
-                port = int(os.getenv("PORT", config.PORT))
-                site = web.TCPSite(runner, "0.0.0.0", port)
+                site = web.TCPSite(runner, "0.0.0.0", int(port_env))
                 await site.start()
 
-                logger.info(f"🌐 HTTP server listening on :{port}")
+                print(f"HTTP server listening on {port_env}")
                 await shutdown_event.wait()
 
+            # 🔹 PC + ORACLE
             else:
                 await bot.delete_webhook(drop_pending_updates=True)
                 await dispatcher.start_polling(bot)
-
-
-
-           
+         
     except Exception as e:
         print(f"DEBUG: Fatal error in app_entry: {e}")
         import traceback
@@ -970,6 +965,37 @@ async def app_entry():
     finally:
         print("DEBUG: Cleaning up resources...")
         await cleanup_resources()
+"""
+
+
+async def app_entry():
+    print("DEBUG: app_entry started")
+    global runner, bot, dispatcher
+
+    try:
+        async with lifespan(config):
+
+            port_env = os.getenv("PORT")
+
+            if port_env:
+                app = await create_app()
+
+                runner = web.AppRunner(app)
+                await runner.setup()
+
+                site = web.TCPSite(runner, "0.0.0.0", int(port_env))
+                await site.start()
+
+                print(f"HTTP server listening on {port_env}")
+                await shutdown_event.wait()
+
+            else:
+                await bot.delete_webhook(drop_pending_updates=True)
+                await dispatcher.start_polling(bot)
+
+    finally:
+        await cleanup_resources()
+
 
 
 async def create_app() -> web.Application:

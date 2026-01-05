@@ -19,13 +19,7 @@ class Environment(str, Enum):
     PRODUCTION = "production"
     TESTNET = "testnet"
     DEVELOPMENT = "development"
-
-
-class BotMode(str, Enum):
-    AUTO = "auto"
-    POLLING = "polling"
-    WEBHOOK = "webhook"
-    
+   
 class Settings(BaseSettings):
     """
     Tüm bot yapılandırmasını tek merkezden yöneten ana sınıf.
@@ -59,8 +53,6 @@ class Settings(BaseSettings):
 
     # BOT_MODE
     # Render veya Oracle gibi platformlarda otomatik olarak webhook moduna geçer.
-    
-    
     """
     @computed_field
     @property
@@ -71,13 +63,6 @@ class Settings(BaseSettings):
             return "webhook"
         return "polling"
     """
-    BOT_MODE: BotMode = BotMode.AUTO
-
-    WEBHOOK_HOST: str | None = None
-    PORT: int = 3000
-
-
-
 
     @computed_field
     @property
@@ -156,30 +141,6 @@ class Settings(BaseSettings):
         # Veritabanı klasörünü oluştur
         db_path = Path(self.DATABASE_URL).parent
         if db_path: db_path.mkdir(parents=True, exist_ok=True)
-
-def resolve_bot_mode(config: Settings) -> BotMode:
-    """
-    Çalışma ortamına göre gerçek bot modunu belirler.
-    
-    Kurallar:
-    - BOT_MODE manuel ayarlanmışsa → onu kullan
-    - AUTO ise:
-        - PORT varsa (Render gibi) → WEBHOOK
-        - Yoksa → POLLING
-    """
-
-    # 1️⃣ Manuel override
-    if config.BOT_MODE == BotMode.POLLING:
-        return BotMode.POLLING
-
-    if config.BOT_MODE == BotMode.WEBHOOK:
-        return BotMode.WEBHOOK
-
-    # 2️⃣ AUTO modu
-    if os.getenv("PORT"):
-        return BotMode.WEBHOOK
-
-    return BotMode.POLLING
 
 
 # --- SINGLETON INSTANCE ---
