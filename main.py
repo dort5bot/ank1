@@ -49,7 +49,7 @@ from analysis.market_collector import collect_once
 bot: Optional[Bot] = None
 dispatcher: Optional[Dispatcher] = None
 binance_api: Optional[Union[BinanceAggregator]] = None
-
+background_tasks: list[asyncio.Task] = []
 
 runner: Optional[web.AppRunner] = None
 shutdown_event = asyncio.Event()
@@ -785,7 +785,11 @@ async def lifespan(config: Settings = config):
         print("DEBUG: All components initialized successfully")
         
         # ✅ BACKGROUND COLLECTOR BAŞLAT
-        asyncio.create_task(background_market_collector())
+        # asyncio.create_task(background_market_collector())
+        task = asyncio.create_task(background_market_collector())
+        background_tasks.append(task)
+
+
         yield
         
     except Exception as e:
@@ -919,54 +923,6 @@ async def background_market_collector():
 # OPTIMIZED MAIN ENTRY POINT - CONFIG TABANLI
 # ---------------------------------------------------------------------
 # Config tabanlı çift modlu main entry
-"""async def app_entry():
-    print("DEBUG: app_entry started")
-    
-    global runner, bot, dispatcher
-    
-    try:
-        # ✅ Config zaten import edildi, direk kullan
-        print("DEBUG: Configuration loaded from config.py")
-        
-        # ✅ Config'ten modu oku (BOT_MODE computed property'yi kullan)
-        # bot_mode = config.BOT_MODE  # Direkt config.BOT_MODE kullan
-        # print(f"DEBUG: Starting in {bot_mode} mode")
-        
-        # ✅ Lifespan ile bileşenleri başlat
-        print("DEBUG: Starting lifespan...")
-
-        async with lifespan(config):
-
-            port_env = os.getenv("PORT")
-
-            # 🔹 RENDER
-            if port_env:
-                app = await create_app()
-
-                runner = web.AppRunner(app)
-                await runner.setup()
-
-                site = web.TCPSite(runner, "0.0.0.0", int(port_env))
-                await site.start()
-
-                print(f"HTTP server listening on {port_env}")
-                await shutdown_event.wait()
-
-            # 🔹 PC + ORACLE
-            else:
-                await bot.delete_webhook(drop_pending_updates=True)
-                await dispatcher.start_polling(bot)
-         
-    except Exception as e:
-        print(f"DEBUG: Fatal error in app_entry: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-    finally:
-        print("DEBUG: Cleaning up resources...")
-        await cleanup_resources()
-"""
-
 
 async def app_entry():
     print("DEBUG: app_entry started")
@@ -1034,29 +990,42 @@ async def create_app() -> web.Application:
 # ---------------------------------------------------------------------
 # POLLING MODU İÇİN SHUTDOWN DESTEĞİ
 # ---------------------------------------------------------------------
-async def stop_polling():
-    """Polling modunu durdur"""
-    global dispatcher, bot
-    if dispatcher:
-        await dispatcher.stop_polling()
-        logger.info("✅ Polling stopped")
+# async def stop_polling():
+    # """Polling modunu durdur"""
+    # global dispatcher, bot
+    # if dispatcher:
+        # await dispatcher.stop_polling()
+        # logger.info("✅ Polling stopped")
 
 
 # Signal handler
-def handle_shutdown(signum, frame) -> None:
-    """Handle shutdown signals gracefully."""
-    logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
-    try:
-        loop = asyncio.get_event_loop()
-        loop.call_soon_threadsafe(shutdown_event.set)
-        
-        # Polling modu için ek - config.BOT_MODE kullan
-        if config.BOT_MODE == "polling":
-            asyncio.create_task(stop_polling())
-            
-    except Exception:
-        shutdown_event.set()       
-        
+async def shutdown_async():
+    logger.info("🛑 Graceful shutdown started")
+
+    # Global shutdown flag
+    shutdown_event.set()
+
+    # Polling varsa DURDUR
+    if dispatcher:
+        await dispatcher.stop_polling()
+
+    # Background task'ları iptal et
+    for task in background_tasks:
+        task.cancel()
+
+    # Bot session kapat
+    if bot and hasattr(bot, "session"):
+        await bot.session.close()
+
+    logger.info("✅ Graceful shutdown completed")
+
+
+def handle_shutdown(signum, frame):
+    logger.info(f"🛑 Received signal {signum}")
+    loop = asyncio.get_event_loop()
+    loop.create_task(shutdown_async())
+
+ 
 signal.signal(signal.SIGTERM, handle_shutdown)
 signal.signal(signal.SIGINT, handle_shutdown)
 
