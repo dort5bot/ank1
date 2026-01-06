@@ -42,7 +42,7 @@ from utils.apikey_manager import (
 
 logger = logging.getLogger(__name__)
 
-router = Router()
+router = Router(name="apikey_handler")
 
 # Singletons from utils
 _api_manager: APIKeyManager = APIKeyManager.get_instance()

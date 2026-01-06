@@ -62,7 +62,7 @@ from analysis.db_loader import load_latest_snapshots
 
 
 logger = logging.getLogger(__name__)
-router = Router(name="command_router")
+router = Router(name="analiz_handler")
 
 # ✅ TÜM KOMUTLAR - SADECE SCORES LİSTESİ
 COMMANDS = {
@@ -144,81 +144,124 @@ class UnifiedCommandHandler:
         return {"error": f"Komut işleme mantığı bulunamadı: {cmd}"}
             
 
-
-
-    async def _handle_table(self, cmd: str, args: list) -> dict:
-        """
+    """
         Tablo tabanlı komutları (Watchlist, Top N, Tekil Coin) yönetir.
         target: Hangi semboller
         cmd: Hangi komut (/t, /tat, /tv vb.)
         hangi metrikleri hesaplar
-        
+        core ile iletişim bölümü 
+    """
+            
+    async def _handle_table(self, cmd: str, args: list) -> dict:
+        """
+        Tablo tabanlı komutları (Watchlist, Top N, Tekil Coin) yönetir.
         """
         try:
-            # Durum 1: Sadece /t veya /ap (Default Listeler)
+            # 1. Hangi semboller analiz edilecek? ✅
             if not args:
-                # /ap komutu ise INDEX_BASKET, /t ise WATCHLIST kullanılacak
-                target = "INDEX_BASKET" if cmd == "/ap" else None 
-            
-            # Durum 2: /t 5 (Hacimli N coin)
+                # /t komutu boşsa default watchlist
+                symbols = self.default_watchlist
+                volume_based = False
+                
             elif args[0].isdigit():
-                target = int(args[0])
-            
-            # Durum 3: /t BTC veya /t BTC ETH (Belirli coinler)
+                # /t 5 → Hacimli ilk N coin
+                n = int(args[0])
+                symbols = await get_top_volume_symbols(count=n)
+                volume_based = True
+                
             else:
-                target = [s.upper() for s in args] if len(args) > 1 else args[0].upper()
-
-            # Hangi metrikler hesaplanacak?
-            # Handler'daki COMMANDS dict'inden hangi metrikler gerekiyor?
+                # /t BTC veya /t BTC ETH SOL
+                symbols = []
+                for arg in args:
+                    normalized = self._normalize_symbol(arg)
+                    if normalized:
+                        symbols.append(normalized)
+                volume_based = False
+            
+            if not symbols:
+                return {"error": "Analiz için sembol bulunamadı"}
+            
+            # 2. Hangi metrikler hesaplanacak? ✅
             requested_metrics = self.commands.get(cmd, [])
+            if not requested_metrics:
+                return {"error": f"Komut '{cmd}' için metrik tanımı bulunamadı"}
             
-            # Core'a hem target hem de metrikleri gönder
-            from analysis.a_core import process_pipeline
-            results = await process_pipeline(
-                target=target, 
-                cmd=cmd,
-                metrics=requested_metrics
-            )
+            # 3. Core'u çağır ✅
+            from analysis.a_core import run_full_analysis
             
+            # Her sembol için ayrı analiz yap
+            symbol_scores = {}
+            failed_symbols = []
+            
+            for symbol in symbols:
+                try:
+                    # Core analizi yap
+                    # result = await run_full_analysis(
+                        # symbol=symbol,
+                        # metrics=requested_metrics
+                    # )
+                    result = await run_full_analysis(
+                        symbols=[symbol],
+                        metrics=requested_metrics
+                    )
+
+                    
+                    
+                    
+                    # if "error" in result:
+                        # failed_symbols.append(symbol)
+                        # continue
+                        
+                    symbol_result = result.get(symbol)
+
+                    if not symbol_result or symbol_result.get("status") != "success":
+                        failed_symbols.append(symbol)
+                        continue
+
+                        
+                        
+                    # Skorları çıkar
+                    # scores = self._extract_scores(
+                        # result, 
+                        # requested_metrics, 
+                        # symbol
+                    # )
+                    
+                    # symbol_result = result[symbol]
+
+                    scores = self._extract_scores(
+                        symbol_result,
+                        requested_metrics,
+                        symbol
+                    )
+                                    
+                    
+                    symbol_scores[symbol] = scores
+                    
+                except Exception as e:
+                    logger.error(f"{symbol} analiz hatası: {e}")
+                    failed_symbols.append(symbol)
+            
+            # 4. Sonuçları formatla ✅
             return {
                 "type": "TABLE",
                 "command": cmd,
-                "data": results
+                "command_name": self._get_command_name(cmd),
+                "symbol_scores": symbol_scores,
+                "failed_symbols": failed_symbols,
+                "success_count": len(symbol_scores),
+                "symbol_count": len(symbols),
+                "volume_based": volume_based,
+                "scores": requested_metrics  # İstenen metrik listesi
             }
-        except Exception as e:
-            logger.error(f"Handler _handle_table hatası: {e}")
-            return {"error": f"Analiz motoru hatası: {str(e)}"}
             
+        except Exception as e:
+            logger.error(f"Handler _handle_table hatası: {e}", exc_info=True)
+            return {"error": f"Analiz motoru hatası: {str(e)}"}
+        
 
 
     # Alt Power (Index) analizini yönetir
-    """async def _handle_alt_power(self, cmd: str, args: list) -> dict:
-        try:
-            from analysis.db_loader import load_latest_snapshots
-            from analysis.a_core import get_alt_power, INDEX_BASKET
-            
-            # 1. Gerekli tüm sembolleri (Sepet + BTC) DB'den çek
-            symbols_to_load = list(set(INDEX_BASKET + ["BTCUSDT"]))
-            
-            # Analiz için yeterli lookback (örn: 50 snapshot)
-            df = load_latest_snapshots(symbols_to_load, lookback=50)
-            
-            if df.empty:
-                return {"error": "DB'de analiz için yeterli veri bulunamadı. Collector çalışıyor mu?"}
-
-            # 2. Yeni a_core.py hesaplamasını çalıştır
-            scores = get_alt_power(df, INDEX_BASKET)
-
-            return {
-                "type": "INDEX_REPORT",
-                "command": cmd,
-                "data": scores
-            }
-        except Exception as e:
-            logger.error(f"Alt Power Error: {e}", exc_info=True)
-            return {"error": f"Hesaplama hatası: {str(e)}"}
-    """
-
     async def _handle_alt_power(self, cmd: str, args: list) -> dict:
         try:
             from analysis.a_core import get_alt_power

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 # Handler'ın kendi sabit değişkenleri
-SCAN_DEFAULT = 30      # Varsayılan coin sayısı
+SCAN_DEFAULT = 100      # Varsayılan coin sayısı
 SCAN_MAX = 100         # Maksimum coin sayısı
 CACHE_TTL = 60         # 60 saniye cache ömrü
 
