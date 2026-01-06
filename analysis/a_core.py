@@ -1,4 +1,6 @@
 # a_core.py
+# python -m analysis.a_core
+
 from __future__ import annotations
 import asyncio
 import logging
@@ -321,15 +323,6 @@ class BinanceDataFetcher:
             merged_df = df if merged_df.empty else merged_df.combine_first(df)
         return merged_df
 
-    """async def fetch_multi_market_data(self, symbols: List[str], interval="1h", limit=100):
-        tasks = []
-        for s in symbols:
-            p = {"klines": {"symbol": s, "interval": interval, "limit": limit}}
-            tasks.append(self.fetch_symbol_data(s, p))
-        
-        results = await asyncio.gather(*tasks)
-        return pd.concat(results) if results else pd.DataFrame()
-    """
     # a_core.py içindeki BinanceDataFetcher sınıfının metodunu bu şekilde güncelleyin:
 
     async def fetch_multi_market_data(self, symbols: List[str], interval="1h", limit=100):
@@ -389,112 +382,261 @@ class BinanceDataFetcher:
 # diğerleri class olarak yazılır, buraya eklenir
 # ------------------------------------------------------------
 class CoreAnalysisEngine:
+    """
+    Core analiz motoru.
+    - Metric resolve
+    - Data fetch
+    - Raw metric hesaplama
+    - Normalizasyon
+    - Composite & Macro skorlar
+    """
+
+    # =========================================================
+    # 1️⃣ INIT / LIFECYCLE
+    # =========================================================
     def __init__(self):
         self.fetcher = BinanceDataFetcher()
         self.market_engine = MarketContextEngine()
         self.resolver = get_default_resolver()
-        self.cpu_executor = concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count())
-        self.io_executor = concurrent.futures.ThreadPoolExecutor(max_workers=20)
 
-    async def get_alt_power(self, basket: List[str] = INDEX_BASKET):
-        """Sadece AP sonucunu döner. Veriyi DB'den çeker."""
-        from analysis.db_loader import load_latest_snapshots # Import burada veya üstte
-        
-        # 1. Gerekli tüm sembolleri (Sepet + BTC) belirle
-        symbols_to_load = list(set(basket + ["BTCUSDT"]))
-        
-        # 2. DB'den son 50 snapshot'ı çek (funding ve OI burada var)
-        # Bu fonksiyon senkron olduğu için bir executor içinde çalıştırmak daha sağlıklıdır
-        loop = asyncio.get_running_loop()
-        df_raw = await loop.run_in_executor(None, load_latest_snapshots, symbols_to_load, 50)
-        
-        if df_raw.empty:
-            logger.warning("⚠️ Alt Power için DB'den veri gelmedi!")
-            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0, "error": "Veri yok"}
+        self.cpu_executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=os.cpu_count()
+        )
+        self.io_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=20
+        )
 
-        return self.market_engine.calculate_alt_power(df_raw, basket)
+    # Kaynakları düzgün kapat.
+    """async def close(self):
+        if self.fetcher:
+            await self.fetcher.close()
+
+        self.cpu_executor.shutdown(wait=False)
+        self.io_executor.shutdown(wait=False)
         
-    async def run_full_analysis(self, symbols: Union[str, List[str]], metrics: List[str] = None):
-        """Hem AP hem de teknik analiz sonuçlarını birleştirir."""
-        symbols = [symbols] if isinstance(symbols, str) else symbols
-        
-        # 1. Market Context (AP) paralel çalışsın
-        ap_task = asyncio.create_task(self.get_alt_power())
-        
-        # 2. Teknik Analizler
-        analysis_tasks = [self._analyze_single(s, metrics or ["trend"], "1h", 100) for s in symbols]
-        analyses = await asyncio.gather(*analysis_tasks)
-        
-        ap_results = await ap_task
-        
-        return {
-            "market_context": ap_results,
-            "results": {s: r for s, r in zip(symbols, analyses)}
-        }
-        
-    async def _analyze_single(self, symbol: str, metrics: List[str], interval: str, limit: int):
+        self.cpu_executor.shutdown(wait=False, cancel_futures=True)
+        self.io_executor.shutdown(wait=False, cancel_futures=True)
+    """
+
+    async def close(self):
+        """Graceful shutdown for CoreAnalysisEngine"""
+        # Fetcher
         try:
-            # 1. Resolve & Fetch
+            if self.fetcher:
+                await self.fetcher.close()
+                self.fetcher = None
+        except Exception as e:
+            logger.warning(f"Fetcher close failed: {e}")
+
+        # CPU executor
+        try:
+            if self.cpu_executor:
+                self.cpu_executor.shutdown(
+                    wait=False,
+                    cancel_futures=True
+                )
+                self.cpu_executor = None
+        except Exception as e:
+            logger.warning(f"CPU executor shutdown failed: {e}")
+
+        # IO executor
+        try:
+            if self.io_executor:
+                self.io_executor.shutdown(
+                    wait=False,
+                    cancel_futures=True
+                )
+                self.io_executor = None
+        except Exception as e:
+            logger.warning(f"IO executor shutdown failed: {e}")
+
+        
+  
+
+    # =========================================================
+    # 2️⃣ STATIC HELPERS (STATE YOK)
+    # =========================================================
+    @staticmethod
+    def normalize_metric_value(
+        name: str,
+        value: float,
+        df: pd.DataFrame
+    ) -> float:
+        """Metric tipine göre normalize et."""
+        try:
+            if name in ("ema", "macd", "sma"):
+                if "close" in df.columns and not df.empty and value:
+                    price = df["close"].iloc[-1]
+                    return float(np.tanh((price - value) / value * 10))
+
+            elif name in ("rsi", "stochastic_oscillator", "adx"):
+                return float((value - 50) / 50)
+
+            elif name in ("historical_volatility", "atr", "bollinger_width"):
+                return float(np.clip(value / 0.1, -1, 1))
+
+            elif name in ("funding_rate", "funding_premium"):
+                return float(np.clip(value * 100, -1, 1))
+
+            return float(np.clip(value, -1, 1))
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def prepare_data(df: pd.DataFrame, mdef: Dict) -> pd.DataFrame:
+        """Metric için gerekli kolonları hazırla."""
+        required_cols = mdef.get("required_columns", [])
+        if not required_cols:
+            return df
+
+        prepared = {}
+        for col in required_cols:
+            if col in df.columns:
+                prepared[col] = df[col]
+            else:
+                matches = [c for c in df.columns if c.startswith(f"{col}__")]
+                if matches:
+                    prepared[col] = df[matches[0]]
+
+        return pd.DataFrame(prepared) if prepared else df
+
+    # =========================================================
+    # 3️⃣ MARKET CONTEXT (AP)
+    # =========================================================
+    async def get_alt_power(self, basket: List[str] = INDEX_BASKET):
+        """Alt Power (AP) hesapla."""
+        from analysis.db_loader import load_latest_snapshots
+
+        symbols = list(set(basket + ["BTCUSDT"]))
+        loop = asyncio.get_running_loop()
+
+        df = await loop.run_in_executor(
+            None, load_latest_snapshots, symbols, 50
+        )
+
+        if df.empty:
+            return {
+                "alt_vs_btc_short": 50.0,
+                "alt_short_term": 50.0,
+                "coin_long_term": 50.0,
+                "error": "Veri yok"
+            }
+
+        return self.market_engine.calculate_alt_power(df, basket)
+
+    # =========================================================
+    # 4️⃣ ANA PUBLIC API
+    # =========================================================
+
+    async def run_full_analysis(
+        self,
+        symbols,
+        metrics=None,
+        interval="1h",
+        limit=100
+    ):
+        """
+        TEK ve GERÇEK analiz yolu.
+        """
+        if isinstance(symbols, str):
+            symbols = [symbols]
+
+        results = {}
+
+        ap_task = asyncio.create_task(self.get_alt_power())
+
+        for symbol in symbols:
+            results[symbol] = await self._analyze_symbol(
+                symbol, metrics, interval, limit
+            )
+
+        market_context = await ap_task
+
+        return {
+            "market_context": market_context,
+            "results": results
+        }
+
+
+
+    # =========================================================
+    # 5️⃣ INTERNAL PIPELINE
+    # =========================================================
+    async def _analyze_symbol(
+        self,
+        symbol: str,
+        metrics,
+        interval: str,
+        limit: int
+    ) -> Dict[str, Any]:
+        try:
             score_map = resolve_scores_to_metrics(metrics, COMPOSITES, MACROS)
-            flat_metrics = list({m for sub in score_map.values() for m in sub})
+            flat_metrics = list({m for v in score_map.values() for m in v})
+
+            if not flat_metrics:
+                flat_metrics = ["ema", "macd", "rsi", "stochastic_oscillator"]
+
             metric_defs = self.resolver.resolve_multiple_definitions(flat_metrics)
-            
-            ep_params = {}
+
+            endpoint_params = {}
             for mdef in metric_defs.values():
                 for ep, factory in mdef.get("endpoint_params", {}).items():
-                    ep_params[ep] = factory(symbol, interval, limit)
+                    endpoint_params[ep] = factory(symbol, interval, limit)
 
-            df = await self.fetcher.fetch_symbol_data(symbol, ep_params)
-            if df.empty: return {"symbol": symbol, "error": "No data"}
+            if not endpoint_params:
+                endpoint_params = {
+                    "klines": {"symbol": symbol, "interval": interval, "limit": limit}
+                }
 
-            # 2. Calculate Raw Metrics
-            calc_tasks = []
+            df = await self.fetcher.fetch_symbol_data(symbol, endpoint_params)
+            if df.empty:
+                return {"symbol": symbol, "status": "failed", "error": "No data"}
+
+            # ---- RAW METRICS ----
+            raw_metrics = {}
             for name, mdef in metric_defs.items():
-                calc_tasks.append(self._calculate_metric(name, mdef, df))
-            
-            metric_results = dict(await asyncio.gather(*calc_tasks))
+                try:
+                    func = mdef["function"]
+                    prep_df = self.prepare_data(df, mdef)
 
-            # 3. Calculate Composites & Macros
-            comp_scores = await self._calculate_formulas(metric_results, COMPOSITES)
-            macro_scores = await self._calculate_formulas(comp_scores, MACROS)
+                    raw = func(prep_df, **mdef.get("default_params", {}))
+                    val = extract_final_value(raw, name)
+
+                    raw_metrics[name] = self.normalize_metric_value(
+                        name, val, prep_df
+                    )
+                except Exception:
+                    raw_metrics[name] = 0.0
+
+            # ---- COMPOSITES ----
+            composites = {}
+            for comp in metrics or []:
+                if comp in COMPOSITES:
+                    composites[comp] = await FormulaEngine.evaluate(
+                        COMPOSITES[comp]["formula"],
+                        raw_metrics
+                    )
+
+            # ---- MACROS ----
+            macros = {}
+            context = {**raw_metrics, **composites}
+            for name, info in MACROS.items():
+                macros[name] = await FormulaEngine.evaluate(
+                    info["formula"], context
+                )
 
             return {
                 "symbol": symbol,
+                "status": "success",
+                "scores": {**composites, **macros},
+                "raw_metrics": raw_metrics,
                 "timestamp": datetime.utcnow().isoformat(),
-                "scores": {**comp_scores, **macro_scores},
-                "raw_metrics": metric_results
+                "endpoints_used": list(endpoint_params.keys())
             }
+
         except Exception as e:
-            logger.error(f"Pipeline error for {symbol}: {e}")
-            return {"symbol": symbol, "error": str(e)}
+            return {"symbol": symbol, "status": "failed", "error": str(e)}
 
-    async def _calculate_metric(self, name, mdef, df):
-        func = mdef.get("function")
-        params = mdef.get("default_params", {})
-        exec_type = mdef.get("execution_type", "sync")
-        
-        # Data preparation (Sadece gerekli kolonlar)
-        prep_df = prepare_data(df, mdef)
-        
-        try:
-            if exec_type == "async":
-                raw = await func(prep_df, **params)
-            else:
-                loop = asyncio.get_running_loop()
-                executor = self.cpu_executor if mdef.get("metadata", {}).get("category") == "advanced" else self.io_executor
-                raw = await loop.run_in_executor(executor, partial(func, prep_df, **params))
-            
-            val = extract_final_value(raw, name)
-            return name, float(np.clip(val, -1, 1)) if not math.isnan(val) else 0.0
-        except:
-            return name, 0.0
-
-    async def _calculate_formulas(self, source, definitions):
-        results = {}
-        for name, info in definitions.items():
-            formula = info.get("formula")
-            results[name] = await FormulaEngine.evaluate(formula, source)
-        return results
 
 
 # ------------------------------------------------------------
@@ -701,15 +843,126 @@ _engine = CoreAnalysisEngine()
 async def get_alt_power():
     return await _engine.get_alt_power()
 
-async def get_top_volume_symbols(count: int = 10) -> List[str]:
-    return await _engine.fetcher.get_top_volume_symbols(count)
-    
-async def run_full_analysis(symbols, metrics=None):
-    return await _engine.run_full_analysis(symbols, metrics)
+# async def get_top_volume_symbols(count: int = 10) -> List[str]:
+    # return await _engine.fetcher.get_top_volume_symbols(count)
 
-if __name__ == "__main__":
+
+async def get_top_volume_symbols(count: int = 10):
+    fetcher = BinanceDataFetcher()
+    return await fetcher.get_top_volume_symbols(count)
+
+   
+async def run_full_analysis(
+    symbols,
+    metrics=None,
+    interval="1h",
+    limit=100,
+):
+    return await _engine.run_full_analysis(
+        symbols, metrics, interval, limit
+    )
+
+
+
+"""if __name__ == "__main__":
     # Test kullanım
     async def test():
         res = await run_full_analysis("BTCUSDT", metrics=["trend"])
         print(res)
     asyncio.run(test())
+
+"""
+    
+if __name__ == "__main__":
+    async def test_top_volume_analysis():
+        """Hacimli coinleri analiz eden test
+        # Varsayılan (5 coin)
+        python -m analysis.a_core
+
+        # Hızlı test (sadece BTC)
+        python -m analysis.a_core quick
+                
+                
+        """
+        print("Hacimli Coin Analizi Testi\n" + "="*50)
+        
+        # 1. Hacimli coinleri al
+        count = 7  # İstediğin sayı
+        top_symbols = await get_top_volume_symbols(count)
+        print(f"En hacimli {count} coin: {top_symbols}")
+        print()
+        
+        # 2. Bu coinleri analiz et
+        metrics = ["trend", "mom", "vol", "risk", "core"]
+        # metrics = ["core"]
+        print(f"Analiz edilecek metrikler: {metrics}")
+        print()
+        
+        # 3. Analizi çalıştır
+        results = await run_full_analysis(
+            symbols=top_symbols,
+            metrics=metrics,
+            interval="1h",
+            limit=100
+        )
+        
+        # 4. Sonuçları tablo şeklinde göster
+        print("\n📊 ANALİZ SONUÇLARI")
+        print("-" * 80)
+        print(f"{'Sembol':<12} {'Trend':<8} {'Mom':<8} {'Vol':<8} {'Risk':<8} {'Core':<8}")
+        print("-" * 80)
+        
+        for symbol in top_symbols:
+            symbol_data = results.get("results", {}).get(symbol, {})
+            scores = symbol_data.get("scores", {})
+            
+            print(f"{symbol:<12} "
+                  f"{scores.get('trend', 0):<8.3f} "
+                  f"{scores.get('mom', 0):<8.3f} "
+                  f"{scores.get('vol', 0):<8.3f} "
+                  f"{scores.get('risk', 0):<8.3f} "
+                  f"{scores.get('core', 0):<8.3f}")
+        
+        # 5. Market context'i göster
+        print("\n🌐 MARKET DURUMU")
+        print("-" * 80)
+        market_context = results.get("market_context", {})
+        for key, value in market_context.items():
+            if isinstance(value, (int, float)):
+                print(f"{key:<25}: {value:.2f}")
+            else:
+                print(f"{key:<25}: {value}")
+        
+        # 6. En yüksek core skorlu coin
+        print("\n🏆 EN İYİ PERFORMANS")
+        best_symbol = None
+        best_score = -1
+        
+        for symbol in top_symbols:
+            symbol_data = results.get("results", {}).get(symbol, {})
+            core_score = symbol_data.get("scores", {}).get("core", -1)
+            if core_score > best_score:
+                best_score = core_score
+                best_symbol = symbol
+        
+        if best_symbol:
+            print(f"En yüksek core skoru: {best_symbol} ({best_score:.3f})")
+    
+    async def quick_test():
+        """Hızlı test - tek coin"""
+        print("Hızlı Test: BTCUSDT")
+        result = await run_full_analysis("BTCUSDT", metrics=["trend", "core"])
+        print(result)
+    
+    # Testleri çalıştır
+    import sys
+    
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "quick":
+            asyncio.run(quick_test())
+        elif sys.argv[1] == "top":
+            count = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+            asyncio.run(test_top_volume_analysis())
+    else:
+        # Varsayılan: kapsamlı test
+        asyncio.run(test_top_volume_analysis())
