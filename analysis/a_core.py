@@ -862,17 +862,12 @@ async def run_full_analysis(
         symbols, metrics, interval, limit
     )
 
+# a_core.py'nin son kısmında (export edilen fonksiyonların yanına):
+WATCHLIST = WATCHLIST  # Zaten tanımlı, sadece export ediyoruz
+INDEX_BASKET = INDEX_BASKET
+FULL_COLLECT_LIST = FULL_COLLECT_LIST
 
-
-"""if __name__ == "__main__":
-    # Test kullanım
-    async def test():
-        res = await run_full_analysis("BTCUSDT", metrics=["trend"])
-        print(res)
-    asyncio.run(test())
-
-"""
-    
+   
 if __name__ == "__main__":
     async def test_top_volume_analysis():
         """Hacimli coinleri analiz eden test
