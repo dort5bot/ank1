@@ -57,8 +57,16 @@ import math
 from typing import Dict, List, Any, Optional
 from aiogram import Router, types
 # from analysis.a_core import run_pipeline, calculate_alt_power
-from analysis.a_core import run_full_analysis, get_alt_power, get_top_volume_symbols
+# from analysis.a_core import run_full_analysis, get_alt_power, get_top_volume_symbols
 from analysis.db_loader import load_latest_snapshots
+
+from analysis.a_core import (
+    run_full_analysis, 
+    get_alt_power, 
+    get_top_volume_symbols,
+    WATCHLIST,  # ✅ Core'dan import edin
+    INDEX_BASKET  # ✅ İhtiyacınız olursa
+)
 
 
 logger = logging.getLogger(__name__)
@@ -68,20 +76,20 @@ router = Router(name="analiz_handler")
 COMMANDS = {
     # tekil Başarılılar
     # -----------------------------
-    "/t": ["trend"],
+    "/t": ["trend","mom","vol"],
+    "/tc": ["core"],
+    
     "/tam": ["mom"],
     "/tav": ["vol"], #ağır
     "/tavs": ["vols"], 
     
     "/tas": ["sntp"],   # DB / süreç ŞART
     "/taz":["strs"],    # DB / süreç ŞART
-    
-    "/tac": ["core"],
     "/taf": ["regf"],
     "/tar": ["risk"],
     "/tare": ["regim"],
     "/taen": ["entropy"],
-    "/taam": ["trend","mom","vol"],
+    "/taam": ["trend"],
     "/taps": ["trend","mom","vol","regim","entropy","risk"],
     # -----------------------------
     "/ap": "INDEX_MODE", # Özel mod
@@ -91,8 +99,10 @@ COMMANDS = {
     
     # Trend netse: Yön,Güç,Katılım (fake mi değil mi)
     "/tt": ["trend","mom"],  #["trend","mom","sntp"],
+    
     # Kararsız / yatay piyasa
     "/tk": ["mom","vol","cpxy"],
+    
     # Volatil dönem / haber öncesi
     "/tv": ["vol","vols","cpxy"],    #["vol","vols","sntp","cpxy"],
     # detay
@@ -106,12 +116,17 @@ class UnifiedCommandHandler:
         self.commands = COMMANDS
         
         # ✅ DEFAULT WATCHLIST
-        self.default_watchlist = [
-            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"
-        ]
+        # self.default_watchlist = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"        ]
+        self.default_watchlist = WATCHLIST  # Core'daki listeyi kullan
+        # VEYA isterseniz core'daki listeyi genişletebilirsiniz:
+        # self.default_watchlist = WATCHLIST + ["ARPAUSDT", "ALICEUSDT"]
+        
         
         # ✅ MAXIMUM COIN SAYISI
         self.max_coins = 15
+        
+        # ✅ Core'daki diğer listeleri de kullanabilirsiniz
+        # self.index_basket = INDEX_BASKET  # Sadece referans için
         
         logger.info("✅ Unified Command Handler initialized")
     
@@ -151,7 +166,7 @@ class UnifiedCommandHandler:
         hangi metrikleri hesaplar
         core ile iletişim bölümü 
     """
-            
+
     async def _handle_table(self, cmd: str, args: list) -> dict:
         """
         Tablo tabanlı komutları (Watchlist, Top N, Tekil Coin) yönetir.
@@ -186,63 +201,34 @@ class UnifiedCommandHandler:
             if not requested_metrics:
                 return {"error": f"Komut '{cmd}' için metrik tanımı bulunamadı"}
             
-            # 3. Core'u çağır ✅
-            from analysis.a_core import run_full_analysis
+            # 3. Core'u çağır ✅ - TÜM sembolleri bir kerede gönder
+            # run_full_analysis() sembol listesi bekler, tek sembol değil
+            result = await run_full_analysis(
+                symbols=symbols,  # Bu önemli: liste olarak
+                metrics=requested_metrics,
+                interval="1h",
+                limit=100
+            )
             
-            # Her sembol için ayrı analiz yap
+            # 4. Sonuçları işle ✅
             symbol_scores = {}
             failed_symbols = []
             
-            for symbol in symbols:
-                try:
-                    # Core analizi yap
-                    # result = await run_full_analysis(
-                        # symbol=symbol,
-                        # metrics=requested_metrics
-                    # )
-                    result = await run_full_analysis(
-                        symbols=[symbol],
-                        metrics=requested_metrics
-                    )
-
-                    
-                    
-                    
-                    # if "error" in result:
-                        # failed_symbols.append(symbol)
-                        # continue
-                        
-                    symbol_result = result.get(symbol)
-
-                    if not symbol_result or symbol_result.get("status") != "success":
-                        failed_symbols.append(symbol)
-                        continue
-
-                        
-                        
-                    # Skorları çıkar
-                    # scores = self._extract_scores(
-                        # result, 
-                        # requested_metrics, 
-                        # symbol
-                    # )
-                    
-                    # symbol_result = result[symbol]
-
-                    scores = self._extract_scores(
-                        symbol_result,
-                        requested_metrics,
-                        symbol
-                    )
-                                    
-                    
-                    symbol_scores[symbol] = scores
-                    
-                except Exception as e:
-                    logger.error(f"{symbol} analiz hatası: {e}")
-                    failed_symbols.append(symbol)
+            # result yapısı: {"market_context": {...}, "results": {symbol1: {...}, symbol2: {...}}}
+            all_results = result.get("results", {})
             
-            # 4. Sonuçları formatla ✅
+            for symbol in symbols:
+                symbol_result = all_results.get(symbol)
+                
+                if not symbol_result or symbol_result.get("status") != "success":
+                    failed_symbols.append(symbol)
+                    continue
+                
+                # Skorları çıkar
+                scores = self._extract_scores_from_result(symbol_result, requested_metrics, symbol)
+                symbol_scores[symbol] = scores
+            
+            # 5. Sonuçları formatla ✅
             return {
                 "type": "TABLE",
                 "command": cmd,
@@ -252,14 +238,68 @@ class UnifiedCommandHandler:
                 "success_count": len(symbol_scores),
                 "symbol_count": len(symbols),
                 "volume_based": volume_based,
-                "scores": requested_metrics  # İstenen metrik listesi
+                "scores": requested_metrics,
+                "market_context": result.get("market_context", {})  # Market context'i de ekle
             }
             
         except Exception as e:
             logger.error(f"Handler _handle_table hatası: {e}", exc_info=True)
             return {"error": f"Analiz motoru hatası: {str(e)}"}
-        
+            
 
+
+    def _extract_scores_from_result(self, symbol_result: Dict, requested_metrics: List[str], symbol: str) -> Dict[str, float]:
+        """Core'dan gelen sonuçtan skorları çıkar"""
+        scores = {}
+        
+        logger.info(f"📊 EXTRACT_SCORES for {symbol}")
+        logger.info(f"  Requested metrics: {requested_metrics}")
+        
+        # Core'un dönüş formatı:
+        # {
+        #   "symbol": "...",
+        #   "status": "success",
+        #   "scores": {...},  # COMPOSITES ve MACROS burada
+        #   "raw_metrics": {...},  # Ham metrikler burada
+        #   "timestamp": "..."
+        # }
+        
+        all_scores = symbol_result.get("scores", {})
+        
+        logger.info(f"  All scores dict from core: {all_scores}")
+        
+        for metric_name in requested_metrics:
+            display_name = metric_name.upper()
+            raw_value = all_scores.get(metric_name)
+            
+            if raw_value is None:
+                logger.info(f"  ❌ {metric_name} not found in scores")
+                scores[display_name] = float('nan')
+                continue
+            
+            logger.info(f"  ✅ {metric_name} found: {raw_value} (type: {type(raw_value)})")
+            
+            # Değeri işle
+            try:
+                if isinstance(raw_value, (int, float)):
+                    if math.isnan(raw_value):
+                        scores[display_name] = float('nan')
+                    else:
+                        # Clip and round
+                        clipped = max(-1.0, min(1.0, float(raw_value)))
+                        scores[display_name] = round(clipped, 3)
+                else:
+                    # Try to convert
+                    val = float(raw_value)
+                    clipped = max(-1.0, min(1.0, val))
+                    scores[display_name] = round(clipped, 3)
+            except Exception as e:
+                logger.error(f"  ⚠️ Error processing {metric_name}: {e}")
+                scores[display_name] = float('nan')
+        
+        logger.info(f"📊 FINAL scores for {symbol}: {scores}")
+        return scores
+    
 
     # Alt Power (Index) analizini yönetir
     async def _handle_alt_power(self, cmd: str, args: list) -> dict:
