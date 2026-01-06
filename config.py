@@ -45,11 +45,18 @@ class Settings(BaseSettings):
     ENABLE_TRADING: bool = False
     
     # --- WEBHOOK / DEPLOYMENT ---
+    """
     @computed_field
     @property
     def BOT_MODE(self) -> str:
         return "webhook" if self.WEBHOOK_HOST else "polling"
-    
+    """
+    @computed_field
+    @property
+    def BOT_MODE(self) -> str:
+        return "webhook" if self.ENV == Environment.PRODUCTION else "polling"
+
+
     # Render, Oracle, Heroku gibi platformlarda otomatik PORT atanır
     PORT: int = Field(default=3000, alias="PORT") 
     WEBHOOK_HOST: Optional[str] = None
