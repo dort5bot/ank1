@@ -962,32 +962,15 @@ async def background_market_collector():
         await cleanup_resources()
 """
 
-async def app_entry():
+"""async def app_entry():
     print("DEBUG: app_entry started")
     global runner, bot, dispatcher
 
     try:
         async with lifespan(config):
 
-            """port_env = os.getenv("PORT")
-
-            if port_env:
-                app = await create_app()
-
-                runner = web.AppRunner(app)
-                await runner.setup()
-
-                site = web.TCPSite(runner, "0.0.0.0", int(port_env))
-                await site.start()
-
-                print(f"HTTP server listening on {port_env}")
-                await shutdown_event.wait()
-
-            else:
-                await bot.delete_webhook(drop_pending_updates=True)
-                await dispatcher.start_polling(bot)
-            """
             if config.BOT_MODE == "webhook":
+
                 app = await create_app()
 
                 runner = web.AppRunner(app)
@@ -1008,7 +991,44 @@ async def app_entry():
 
     finally:
         await cleanup_resources()
+"""
 
+
+
+# main.py
+async def app_entry():
+    print("DEBUG: app_entry started")
+    global runner, bot, dispatcher
+
+    try:
+        async with lifespan(config):
+
+            if config.BOT_MODE == "webhook":
+
+                app = await create_app()
+
+                # 🔴 ZORUNLU
+                await bot.set_webhook(
+                    url=config.WEBHOOK_URL,
+                    secret_token=config.WEBHOOK_SECRET,
+                    drop_pending_updates=True
+                )
+
+                runner = web.AppRunner(app)
+                await runner.setup()
+
+                port = int(os.getenv("PORT", 3000))
+                site = web.TCPSite(runner, "0.0.0.0", port)
+                await site.start()
+
+                await shutdown_event.wait()
+
+            else:
+                await bot.delete_webhook(drop_pending_updates=True)
+                await dispatcher.start_polling(bot)
+
+    finally:
+        await cleanup_resources()
 
 
 
@@ -1027,15 +1047,17 @@ async def create_app() -> web.Application:
     app.router.add_get("/ready", readiness_check)
     
     # Webhook setup
-    if config.WEBHOOK_URL:  # ✅ config.WEBHOOK_URL computed property'yi kullan
+    if config.WEBHOOK_URL:
         webhook_handler = SimpleRequestHandler(
             dispatcher=dispatcher,
             bot=bot,
-            secret_token=config.WEBHOOK_SECRET if config.WEBHOOK_SECRET else None
+            secret_token=config.WEBHOOK_SECRET or None
         )
-        webhook_handler.register(app, path=f"/webhook/{config.TELEGRAM_TOKEN}")
-        logger.info(f"✅ Webhook registered at /webhook/{config.TELEGRAM_TOKEN}")
-    
+        webhook_handler.register(app, path="/webhook")
+        logger.info("✅ Webhook registered at /webhook")
+
+
+
     # Hooks
     app.on_startup.append(lambda app: on_startup(bot))
     app.on_shutdown.append(lambda app: on_shutdown(bot))

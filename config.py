@@ -54,26 +54,24 @@ class Settings(BaseSettings):
     PORT: int = Field(default=3000, alias="PORT") 
     WEBHOOK_HOST: Optional[str] = None
     WEBHOOK_SECRET: str = ""
-    
 
-    # BOT_MODE
-    # Render veya Oracle gibi platformlarda otomatik olarak webhook moduna geçer.
     """
-    @computed_field
-    @property
-    def BOT_MODE(self) -> str:
-        if self.WEBHOOK_HOST:
-            return "webhook"
-        if os.getenv("PORT"):
-            return "webhook"
-        return "polling"
-    """
-
     @computed_field
     @property
     def WEBHOOK_URL(self) -> str:
         if not self.WEBHOOK_HOST: return ""
         return f"{self.WEBHOOK_HOST.rstrip('/')}/webhook/{self.TELEGRAM_TOKEN}"
+    """
+
+    @computed_field
+    @property
+    def WEBHOOK_URL(self) -> str:
+        if not self.WEBHOOK_HOST:
+            return ""
+        return f"{self.WEBHOOK_HOST.rstrip('/')}/webhook"
+
+
+
 
     # --- ENCRYPTION & SECURITY ---
     MASTER_KEY: str = Field(default="")
