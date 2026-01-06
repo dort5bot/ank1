@@ -931,9 +931,11 @@ async def app_entry():
     try:
         async with lifespan(config):
 
-            port_env = os.getenv("PORT")
-
-            if port_env:
+            #port_env = os.getenv("PORT")
+            
+            #if port_env:
+            if config.BOT_MODE == "webhook":
+    
                 app = await create_app()
 
                 runner = web.AppRunner(app)
