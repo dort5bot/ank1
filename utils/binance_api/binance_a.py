@@ -730,4 +730,67 @@ class BinanceAggregator:
             self._user_locks.clear()
         
         logger.info(" BinanceAggregator cleanup completed")
+        
+        
+    # ========================================================
+    # 🔹 PING METHODU - HEALTH CHECK İÇİN
+    # ========================================================
+    async def ping(self):
+        """
+        Binance API bağlantısını test et
+        
+        Returns:
+            bool: API'ye bağlantı başarılı ise True, değilse False
+        """
+        logger.info("🔍 Binance ping test started...")
+        
+        try:
+            # Server time endpoint'i kullanarak basit bir test
+            result = await self.get_public_data("server_time")
+            
+            if result and "serverTime" in result:
+                logger.info(f"✅ Binance ping successful. Server time: {result['serverTime']}")
+                return True
+            else:
+                logger.warning("⚠️ Binance ping returned unexpected response")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Binance ping failed: {e}")
+            return False
+    
+    # ========================================================
+    # 🔹 STATÜS METODU
+    # ========================================================
+    def get_status(self) -> dict:
+        """
+        Binance aggregator durumunu döndür
+        
+        Returns:
+            dict: Status bilgileri
+        """
+        status = {
+            "initialized": getattr(self, "_initialized", False),
+            "global_api_key": bool(self.global_api_key and self.global_api_secret),
+            "sessions_count": len(self._user_locks) if hasattr(self, "_user_locks") else 0,
+            "cleanup_task": self._cleanup_task is not None if hasattr(self, "_cleanup_task") else False,
+            "stop_event": self._stop_event.is_set() if hasattr(self, "_stop_event") else False
+        }
+        
+        # API manager durumu
+        if hasattr(self, 'api_manager') and self.api_manager:
+            status["api_manager"] = "active"
+        else:
+            status["api_manager"] = "inactive"
+            
+        # Sessions manager durumu
+        if hasattr(self, 'sessions') and self.sessions:
+            status["sessions_manager"] = "active"
+        else:
+            status["sessions_manager"] = "inactive"
+            
+        return status
+        
+    
+    
 # end
