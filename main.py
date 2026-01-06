@@ -33,6 +33,8 @@ from aiogram.enums import ParseMode
 # Proje modülleri
 from config import config, Settings
 
+
+
 from utils.handler_loader import HandlerLoader
 from utils.apikey_manager import APIKeyManager, AlarmManager, BaseManager, TradeSettingsManager
 from utils.context_logger import setup_context_logging, get_context_logger, ContextAwareLogger
@@ -40,6 +42,10 @@ from utils.performance_monitor import PerformanceMonitor
 from utils.security_auditor import security_auditor
 from utils.binance_api.binance_a import BinanceAggregator
 from utils.binance_api.binance_exceptions import BinanceAPIError, BinanceAuthenticationError
+
+# main.py (global scope)
+from analysis.a_core import _engine as core_engine
+
 
 from analysis.market_collector import collect_once
 
@@ -815,7 +821,8 @@ async def cleanup_resources():
     
     # ✅ API Manager kaynaklarını temizle
     try:
-        api_manager = APIKeyManager.get_instance()
+        # api_manager = APIKeyManager.get_instance()
+        api_manager = await APIKeyManager.get_instance()
         if hasattr(api_manager, 'cleanup'):
             cleanup_tasks.append(api_manager.cleanup()) 
         cleanup_tasks.append(BaseManager.cleanup_all())
@@ -924,18 +931,16 @@ async def background_market_collector():
 # ---------------------------------------------------------------------
 # Config tabanlı çift modlu main entry
 
-async def app_entry():
+"""async def app_entry():
     print("DEBUG: app_entry started")
     global runner, bot, dispatcher
 
     try:
         async with lifespan(config):
 
-            #port_env = os.getenv("PORT")
-            
-            #if port_env:
-            if config.BOT_MODE == "webhook":
-    
+            port_env = os.getenv("PORT")
+
+            if port_env:
                 app = await create_app()
 
                 runner = web.AppRunner(app)
@@ -953,6 +958,55 @@ async def app_entry():
 
     finally:
         await cleanup_resources()
+"""
+
+async def app_entry():
+    print("DEBUG: app_entry started")
+    global runner, bot, dispatcher
+
+    try:
+        async with lifespan(config):
+
+            """port_env = os.getenv("PORT")
+
+            if port_env:
+                app = await create_app()
+
+                runner = web.AppRunner(app)
+                await runner.setup()
+
+                site = web.TCPSite(runner, "0.0.0.0", int(port_env))
+                await site.start()
+
+                print(f"HTTP server listening on {port_env}")
+                await shutdown_event.wait()
+
+            else:
+                await bot.delete_webhook(drop_pending_updates=True)
+                await dispatcher.start_polling(bot)
+            """
+            if config.BOT_MODE == "webhook":
+                app = await create_app()
+
+                runner = web.AppRunner(app)
+                await runner.setup()
+
+                port = int(os.getenv("PORT", 3000))
+                site = web.TCPSite(runner, "0.0.0.0", port)
+                await site.start()
+
+                await shutdown_event.wait()
+
+            else:
+                await bot.delete_webhook(drop_pending_updates=True)
+                await dispatcher.start_polling(bot)
+
+
+
+
+    finally:
+        await cleanup_resources()
+
 
 
 
@@ -1019,13 +1073,26 @@ async def shutdown_async():
     if bot and hasattr(bot, "session"):
         await bot.session.close()
 
+    # 🔥 CORE ENGINE SHUTDOWN (EKSİK PARÇA)
+    try:
+        if core_engine:
+            await core_engine.shutdown()
+            logger.info("✅ CoreAnalysisEngine shutdown")
+    except Exception as e:
+        logger.error(f"Core shutdown error: {e}")
+
     logger.info("✅ Graceful shutdown completed")
 
 
-def handle_shutdown(signum, frame):
+"""def handle_shutdown(signum, frame):
     logger.info(f"🛑 Received signal {signum}")
     loop = asyncio.get_event_loop()
     loop.create_task(shutdown_async())
+"""
+
+def handle_shutdown(signum, frame):
+    logger.info(f"🛑 Signal {signum} received")
+    shutdown_event.set()
 
  
 signal.signal(signal.SIGTERM, handle_shutdown)
