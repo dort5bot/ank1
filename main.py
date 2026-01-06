@@ -491,7 +491,9 @@ async def health_check(request: web.Request) -> web.Response:
         handler_info = {
             "total_routers": len(dispatcher.sub_routers) if dispatcher else 0,
             "router_names": [getattr(r, 'name', 'unnamed') for r in dispatcher.sub_routers] if dispatcher else [],
-            "loaded_handlers": getattr(dispatcher, '_handlers_count', 0) if dispatcher else 0
+            # "loaded_handlers": getattr(dispatcher, '_handlers_count', 0) if dispatcher else 0
+            "loaded_handlers": len(dispatcher.sub_routers)
+  
         }
         
         async with asyncio.timeout(10):
@@ -1075,9 +1077,13 @@ async def shutdown_async():
 
     # 🔥 CORE ENGINE SHUTDOWN (EKSİK PARÇA)
     try:
+        #if core_engine:
+        #    await core_engine.shutdown()
+
         if core_engine:
-            await core_engine.shutdown()
-            logger.info("✅ CoreAnalysisEngine shutdown")
+            await core_engine.close()
+            logger.info("✅ CoreAnalysisEngine closed")
+           
     except Exception as e:
         logger.error(f"Core shutdown error: {e}")
 
@@ -1092,7 +1098,10 @@ async def shutdown_async():
 
 def handle_shutdown(signum, frame):
     logger.info(f"🛑 Signal {signum} received")
-    shutdown_event.set()
+    loop = asyncio.get_event_loop()
+    loop.call_soon_threadsafe(
+        lambda: asyncio.create_task(shutdown_async())
+    )
 
  
 signal.signal(signal.SIGTERM, handle_shutdown)
