@@ -48,6 +48,17 @@ sentiment
 | complexity | ➕ Ayrı rapor |
 | entropy    | ❌ Gösterme   |
 | sentiment  | ❌ Gösterme   |
+
+------------------
+bilgi
+------------------
+Long (yükseliş) yönlü bir pozisyon açacaksan, 
+Funding Rate'in (Fonlama Oranı) düşük olması, hatta mümkünse negatif olması senin lehinedir.
+FR Durumu,Anlamı,Long İçin Yorum
+Yüksek Pozitif (> 0.03),"Piyasa aşırı ""long""lanmış (overheated).",RİSKLİ: Herkes longda olduğu için bir iğne (long squeeze) atıp herkesi patlatabilirler. Ayrıca her 8 saatte bir ciddi komisyon ödersin.
+Düşük Pozitif (0.01),Piyasa dengeli veya hafif yükseliş beklentili.,"UYGUN: Standart piyasa koşuludur, Long için makul görülebilir."
+Negatif (< 0),"Herkes short açmış, piyasa düşüş bekliyor.","FIRSAT (Squeeze): Fiyat aniden yukarı dönerse, short açanlar pozisyon kapatmak zorunda kalır (satın alım yaparlar) ve fiyat roket gibi fırlar. En tatlı Long fırsatları burada doğar."
+
 """
 
 import logging
@@ -59,7 +70,7 @@ from aiogram import Router, types
 # from analysis.a_core import run_pipeline, calculate_alt_power
 # from analysis.a_core import run_full_analysis, get_alt_power, get_top_volume_symbols
 from analysis.db_loader import load_latest_snapshots
-
+from analysis.market_collector import MarketAnalyzer, DB_PATH
 from analysis.a_core import (
     run_full_analysis, 
     get_alt_power, 
@@ -67,6 +78,8 @@ from analysis.a_core import (
     WATCHLIST,  # ✅ Core'dan import edin
     INDEX_BASKET  # ✅ İhtiyacınız olursa
 )
+
+from handlers.market_report import format_table_response
 
 
 logger = logging.getLogger(__name__)
@@ -78,33 +91,35 @@ COMMANDS = {
     # -----------------------------
     "/t": ["trend","mom","vol"],
     "/tc": ["core"],
+    "/tm": ["mom"],
+    "/tr": ["regf"],
+    "/tt": ["trend"],
+    "/tv": ["vols"], 
     
-    "/tam": ["mom"],
     "/tav": ["vol"], #ağır
-    "/tavs": ["vols"], 
-    
     "/tas": ["sntp"],   # DB / süreç ŞART
     "/taz":["strs"],    # DB / süreç ŞART
-    "/taf": ["regf"],
+    
     "/tar": ["risk"],
     "/tare": ["regim"],
     "/taen": ["entropy"],
-    "/taam": ["trend"],
+    
     "/taps": ["trend","mom","vol","regim","entropy","risk"],
-    # -----------------------------
-    "/ap": "INDEX_MODE", # Özel mod
+    # ----- Özel mod ------------------------
+    "/toi": "OI_SCAN",
+    "/ap": "INDEX_MODE",
 
     # Ne yapmalı
-    "/tuz": ["core","regf","vols"],    #["core","regf","vols","strs"],
+    "/tcrv": ["core","regf","vols"],    #["core","regf","vols","strs"],
     
     # Trend netse: Yön,Güç,Katılım (fake mi değil mi)
-    "/tt": ["trend","mom"],  #["trend","mom","sntp"],
+    "/ttms": ["trend","mom"],  #["trend","mom","sntp"],
     
     # Kararsız / yatay piyasa
-    "/tk": ["mom","vol","cpxy"],
+    "/tmvx": ["mom","vol","cpxy"],
     
     # Volatil dönem / haber öncesi
-    "/tv": ["vol","vols","cpxy"],    #["vol","vols","sntp","cpxy"],
+    "/tvvx": ["vol","vols","cpxy"],    #["vol","vols","sntp","cpxy"],
     # detay
     "/tb": ["trend","mom","vol","cpxy"], #"sntp"
 }
@@ -146,14 +161,20 @@ class UnifiedCommandHandler:
         if args and args[0] in ["?", "help", "yardım"]:
             return {"type": "HELP", "command": cmd}
 
-        # 2. KOMUT KONTROLÜ (Girinti Düzeltildi)
+        # 2. KOMUT KONTROLÜ: Özel komutlar için yönlendirme
         if cmd in self.commands:
-            # Eğer komut /ap ise özel metodu çağır
-            if cmd == "/ap":
+
+            if cmd == "/ap":  # /ap
                 return await self._handle_alt_power(cmd, args)
-            
-            # Diğer tüm komutlar (/t, /tt, /tv vb.) için tablo mantığı
-            return await self._handle_table(cmd, args)
+                
+            elif cmd == "/toi":  # /toi
+                return await self._handle_oi_scan(cmd, args)
+                
+            else:
+                # Diğer tüm komutlar için tablo mantığı
+                return await self._handle_table(cmd, args)
+
+
 
         # 3. TANIMSIZ KOMUT
         return {"error": f"Komut işleme mantığı bulunamadı: {cmd}"}
@@ -315,7 +336,35 @@ class UnifiedCommandHandler:
         except Exception as e:
             return {"error": f"Alt Power hatası: {str(e)}"}
             
-      
+    # oi analizini yönetir
+    async def _handle_oi_scan(self, cmd: str, args: list) -> dict:
+        """Open Interest tarama komutu"""
+        try:
+            # from analysis.market_collector import MarketAnalyzer, DB_PATH
+            
+            # Minimum OI değişimi için argüman kontrolü
+            min_oi_change = 3.0
+            if args and args[0].replace('.', '').isdigit():
+                try:
+                    min_oi_change = float(args[0])
+                except:
+                    pass
+            
+            analyzer = MarketAnalyzer(DB_PATH)
+            signals = await analyzer.get_momentum_signals(min_oi_change=min_oi_change)
+            
+            return {
+                "type": "OI_REPORT",
+                "command": cmd,
+                "signals": signals,
+                "min_oi_change": min_oi_change
+            }
+            
+        except Exception as e:
+            logger.error(f"OI scan error: {e}", exc_info=True)
+            return {"error": f"OI tarama hatası: {str(e)}"}
+
+     
     async def _resolve_symbols(self, args: List[str]) -> List[str]:
         # Durum 1: Argüman sayı mı? (/t 5)
         if args and args[0].isdigit():
@@ -334,7 +383,6 @@ class UnifiedCommandHandler:
         # Durum 3: Boş sorgu (/t)
         return self.default_watchlist    
         
-    
     def _is_volume_based(self, args: List[str]) -> bool:
         """Argümanlar hacim bazlı mı?"""
         return bool(args and args[0].isdigit())
@@ -394,7 +442,6 @@ class UnifiedCommandHandler:
         }
         return names.get(cmd, cmd.upper())
     
-
     async def _analyze_symbol(self, symbol: str, required_scores: List[str]) -> Dict[str, Any]:
         """Core pipeline'ını standardize edilmiş 'metrics' parametresi ile çağırır."""
         try:
@@ -412,7 +459,6 @@ class UnifiedCommandHandler:
         except Exception as e:
             logger.error(f"❌ Core analysis failed for {symbol}: {e}")
             return {"error": str(e)}
-
 
     def _extract_scores(self, result: Dict, required_scores: List[str], symbol: str) -> Dict[str, float]:
         """Core'dan gelen skorları çıkar"""
@@ -483,156 +529,28 @@ class UnifiedCommandHandler:
 # ✅ TEK HANDLER INSTANCE
 handler = UnifiedCommandHandler()
 
+# ---------------------------------------------------------------
+from analysis.market_collector import MarketAnalyzer, DB_PATH
 
-# ✅ FORMAT FONKSİYONU
-def format_table_response(result: dict) -> str:
-    """Sonuçları formatla: TABLE ve INDEX_REPORT tiplerini destekler"""
+async def scan_oi_command(update, context):
+    analyzer = MarketAnalyzer(DB_PATH)
+    signals = await analyzer.get_momentum_signals(min_oi_change=3.0)
+    
+    if not signals:
+        await update.message.reply_text("Sakin bir piyasa, henüz sinyal yok.")
+        return
+        
+    report = "📊 **Anlık Momentum Taraması**\n" + "-"*20 + "\n"
+    for s in signals:
+        report += f"🔹 {s['symbol']}: OI %{s['oi_change']:.1f} Artış\n"
+        
+    await update.message.reply_text(report, parse_mode="Markdown")
+    
+# ---------------------------------------------------------------   
+    
+    
+# ✅ raporlama bölümü > MERKEZİ YAPILdı
 
-    import math
-
-    # Hata varsa
-    if "error" in result:
-        return f"❌ <b>Hata:</b> {result['error']}"
-
-    # -----------------------------
-    # INDEX_REPORT (Ör. /ap)
-    # -----------------------------
-    if result.get("type") == "INDEX_REPORT":
-        d = result.get("data", {})
-        if not d:
-            return "❌ <b>Analiz hatası:</b> Veri bulunamadı."
-
-        # Skorlara göre basit renk ikonları
-        def get_trend_icon(val): 
-            if val is None: return "—"
-            return "🟢" if val > 60 else "🔴" if val < 40 else "🟡"
-
-        return (
-            f"📊 <b>ALT MARKET POWER</b>\n"
-            f"───────────────────\n"
-            f"{get_trend_icon(d.get('alt_vs_btc_short'))} <b>Alt vs BTC (Kısa):</b> <code>{d.get('alt_vs_btc_short')}</code>\n"
-            f"{get_trend_icon(d.get('alt_short_term'))} <b>Alt Gücü (Kısa):</b> <code>{d.get('alt_short_term')}</code>\n"
-            f"{get_trend_icon(d.get('coin_long_term'))} <b>Yapısal Güç (OI):</b> <code>{d.get('coin_long_term')}</code>\n"
-            f"───────────────────\n"
-            f"<i>Filtre: {len(d.get('INDEX_BASKET', []))} coinlik sepet analizi.</i>"
-        )
-
-    # -----------------------------
-    # TABLE tipi (Ör. /t, /tv vb.)
-    # -----------------------------
-    if result.get("type") == "TABLE":
-        symbol_scores = result.get("symbol_scores", {})  # <-- güvenli erişim
-        if not symbol_scores:
-            if result.get("volume_based"):
-                return "❌ <b>Hacim Verisi Alınamadı</b>\n\nBinance'den 24 saatlik hacim verisi alınamadı. Lütfen daha sonra tekrar deneyin."
-            else:
-                return "❌ <b>Analiz Başarısız</b>\n\nHiçbir sembol için analiz yapılamadı."
-
-        scores = result.get("scores", [])
-        headers = [s.upper() for s in scores]
-
-        # Başlık
-        if result.get("volume_based"):
-            title = f"📈 <b>{result.get('command_name')}</b> - Top {result.get('symbol_count', len(symbol_scores))} Volume Coins"
-        else:
-            title = f"📊 <b>{result.get('command_name')}</b> - {result.get('success_count', len(symbol_scores))} Coins"
-
-        # Header
-        header_cells = ["Sembol"] + headers
-        header_line = "  ".join([f"{cell:10}" for cell in header_cells])
-        lines = [
-            title,
-            "─" * (5 + len(headers) * 6),
-            f"<b>{header_line}</b>",
-            "─" * (5 + len(headers) * 6)
-        ]
-
-        # Sembolleri sırala
-        sorted_symbols = list(symbol_scores.keys()) if result.get("volume_based") else sorted(symbol_scores.keys())
-
-        for symbol in sorted_symbols:
-            scores_dict = symbol_scores.get(symbol, {})
-            display_symbol = symbol.replace('USDT', '')
-
-            score_cells = [f"{display_symbol:8}"]
-            for header in headers:
-                value = scores_dict.get(header, float('nan'))
-
-                # Ikon
-                icon = get_icon(header, value)
-                if isinstance(value, float) and math.isnan(value):
-                    score_cells.append(f"{icon:2} ---")
-                else:
-                    formatted = f"{value:+.3f}"
-                    score_cells.append(f"{icon:2} {formatted:7}")
-
-            lines.append("  ".join(score_cells))
-
-        # Özet
-        failed_count = len(result.get("failed_symbols", []))
-        success_count = result.get("success_count", len(symbol_scores))
-        total_count = result.get("symbol_count", len(symbol_scores))
-
-        summary_lines = [
-            "─" * (5 + len(headers) * 6),
-            f"<b>Özet:</b> {success_count}/{total_count} başarılı"
-        ]
-        if failed_count > 0:
-            failed_display = [s.replace('USDT', '') for s in result.get('failed_symbols', [])]
-            if failed_display:
-                summary_lines.append(f"<i>Başarısız: {', '.join(failed_display)}</i>")
-        if result.get("volume_based"):
-            summary_lines.append("<i>24 saatlik işlem hacmine göre sıralanmıştır</i>")
-
-        lines.extend(summary_lines)
-
-        # Yardım metni
-        help_text = get_help_text(result.get("command"))
-        if help_text:
-            lines.append("")
-            lines.append(f"<i>{help_text}</i>")
-
-        return "\n".join(lines)
-
-    # -----------------------------
-    # Eğer tip bilinmiyorsa
-    # -----------------------------
-    return "❌ <b>Analiz tipi bilinmiyor</b>"
-
-
-def get_icon(column: str, score: Optional[float]) -> str:
-    """Unified color-only indicator (no arrows, no extra icons)"""
-
-    if score is None or math.isnan(score):
-        return "—"
-
-    if score >= 0.35:
-        return "🟢"
-    elif score >= 0.15:
-        return "🟡"
-    elif score > -0.15:
-        return "⚪"
-    elif score > -0.35:
-        return "🟠"
-    else:
-        return "🔴"
-
-
-def get_help_text(cmd: str) -> str:
-    """Komut için yardım metni"""
-    helps = {
-        "/t": ("Ne yapmalı", ["core", "regf", "vols"]),
-        "/tt": ("Yön, Güç, Katılım", ["trend", "mom"]),
-        "/tk": ("Kararsız / yatay piyasa varsa", ["mom", "vol", "cpxy"]),
-        "/tv": ("Volatil dönemde", ["vol", "vols", "cpxy"]),
-        "/tb": ("Bilgi / detay", ["trend", "mom", "vol", "cpxy"]),
-    }
-
-    if cmd in helps:
-        text, tags = helps[cmd]
-        return f"{text} | Modüller: {', '.join(tags)}"
-
-    return f"Use: {cmd} [SYMBOL] or {cmd} [NUMBER]"
 
 # ✅ MESSAGE HANDLER
 @router.message(lambda msg: msg.text and msg.text.split()[0].lower() in COMMANDS)

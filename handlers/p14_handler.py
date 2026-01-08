@@ -38,22 +38,65 @@ logger = logging.getLogger(__name__)
 # HANDLER KENDİ CONFIG'İ
 # ============================================================
 
-# Handler'ın kendi sabit değişkenleri
-SCAN_DEFAULT = 100      # Varsayılan coin sayısı
-SCAN_MAX = 100         # Maksimum coin sayısı
-CACHE_TTL = 60         # 60 saniye cache ömrü
-
 # Sembol listesini config'den al
-SCAN_SYMBOLS = config.SCAN_SYMBOLS
+# SCAN_SYMBOLS = config.SCAN_SYMBOLS
 # ============================================================
 
-# Helper function for dynamic symbol loading
+
+# ============================================================
+# HANDLER KENDİ CONFIG'İ - DEĞİŞTİRİLDİ
+# ============================================================
+
+# Handler'ın kendi sabit değişkenleri
+# SCAN_DEFAULT = 7      # Varsayılan coin sayısı (WATCHLIST boyutuna göre)
+SCAN_DEFAULT = 100      # Varsayılan coin sayısı
+SCAN_MAX = 100        # Maksimum coin sayısı
+CACHE_TTL = 60        # 60 saniye cache ömrü
+
+# Yeni: a_core'dan WATCHLIST'i almak için import
+try:
+    from analysis.a_core import WATCHLIST as CORE_WATCHLIST
+    WATCHLIST_AVAILABLE = True
+    logger.info(f"✅ a_core WATCHLIST yüklendi: {len(CORE_WATCHLIST)} coin")
+except ImportError:
+    CORE_WATCHLIST = None
+    WATCHLIST_AVAILABLE = False
+    logger.warning("⚠️ a_core WATCHLIST yüklenemedi, fallback kullanılacak")
+
+# Fallback sembol listesi
+FALLBACK_SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", 
+    "ADAUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT", "LINKUSDT"
+]
+
+# Helper function for dynamic symbol loading - GÜNCELLENDİ
 def get_default_symbols(count: int = None) -> List[str]:
     """Get default symbols with optional count limit"""
-    if count is None:
-        count = SCAN_DEFAULT
-    count = min(count, SCAN_MAX)
-    return SCAN_SYMBOLS[:count]
+    # 1. WATCHLIST mevcutsa onu kullan
+    if WATCHLIST_AVAILABLE and CORE_WATCHLIST:
+        symbols = CORE_WATCHLIST
+        logger.debug(f"✅ WATCHLIST kullanılıyor: {len(symbols)} coin")
+    else:
+        # 2. Fallback kullan
+        symbols = FALLBACK_SYMBOLS
+        logger.debug(f"⚠️ Fallback semboller kullanılıyor: {len(symbols)} coin")
+    
+    # 3. Count limit uygula
+    if count is not None:
+        count = min(count, SCAN_MAX, len(symbols))
+        return symbols[:count]
+    
+    # 4. Varsayılan SCAN_DEFAULT'a göre sınırla
+    default_count = min(SCAN_DEFAULT, len(symbols))
+    return symbols[:default_count]
+
+# Pre-loaded default symbols for performance - GÜNCELLENDİ
+DEFAULT_SYMBOLS = get_default_symbols()
+logger.info(f"📊 Varsayılan semboller hazır: {len(DEFAULT_SYMBOLS)} coin")
+
+
+
+
 
 # Pre-loaded default symbols for performance
 DEFAULT_SYMBOLS = get_default_symbols()
@@ -405,100 +448,7 @@ bu 3 özelliği sağlamalı
 /p bnb sol btc → 3 coine ait bilgi
 """
 
-"""1 @router.message(Command("p"))
-async def price_command(message: Message, bot: Bot):
-    user_id = message.from_user.id
-    args = message.text.split()[1:]
-    
-    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    
-    try:
-        # Sayı kontrolü - /p 12
-        if args and args[0].isdigit():
-            limit = min(int(args[0]), SCAN_MAX)
-            symbols = get_default_symbols(limit)  # ✅ Dinamik sembol yükleme
-            data = await price_handler.get_filtered_tickers(user_id, symbols)
-            title = f"💰 **İlk {len(data)} Coin**"
-            await send_coin_list(message, title, data)
-            
-        # Belirli coin sorgusu - /p btc eth
-        elif args:
-            symbols = [price_handler.normalize_symbol(arg) for arg in args]
-            data = await price_handler.get_filtered_tickers(user_id, symbols)
-            title = f"💰 **Coin Fiyatları** ({len(data)} coin)"
-            await send_coin_list(message, title, data)
-            
-        # Default semboller - /p
-        else:
-            symbols = DEFAULT_SYMBOLS  # ✅ Önceden yüklenmiş semboller
-            data = await price_handler.get_filtered_tickers(user_id, symbols)
-            title = f"💰 **Coin Fiyatları** ({len(data)} coin)"
-            await send_coin_list(message, title, data)
-            
-    except Exception as e:
-        logger.error(f"❌ Error in /p for user {user_id}: {e}")
-        await message.answer("❌ Veri alınırken bir hata oluştu.")
-"""
-
-
-"""2 @router.message(Command("p"))
-async def price_command(message: Message, bot: Bot):
-    user_id = message.from_user.id
-    args = message.text.split()[1:]
-
-    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-
-    try:
-        # 1️⃣ /p  → default coinler (hacme göre)
-        if not args:
-            limit = SCAN_DEFAULT
-            data = await price_handler.get_top_volume(user_id, limit)
-
-            title = f"🔥 **Binance Top {limit} Coin (Hacme Göre)**"
-            await send_coin_list(message, title, data)
-            return
-
-        # 2️⃣ /p n → hacimli ilk n coin
-        if len(args) == 1 and args[0].isdigit():
-            limit = int(args[0])
-
-            if limit <= 0:
-                raise ValueError("❌ n 0'dan büyük olmalı")
-
-            limit = min(limit, SCAN_MAX)
-            data = await price_handler.get_top_volume(user_id, limit)
-
-            title = f"🔥 **Binance Top {limit} Coin (Hacme Göre)**"
-            await send_coin_list(message, title, data)
-            return
-
-        # 3️⃣ /p btc → tek coin bilgisi
-        if len(args) == 1 and args[0].isalpha():
-            symbol = price_handler.normalize_symbol(args[0])
-            data = await price_handler.get_filtered_tickers(user_id, [symbol])
-
-            if not data:
-                raise RuntimeError(f"{args[0].upper()} için veri bulunamadı")
-
-            title = f"💰 **{symbol.replace('USDT', '')} Fiyat Bilgisi**"
-            await send_coin_list(message, title, data)
-            return
-
-        # ❌ Diğer her şey hatadır
-        raise ValueError(
-            "❌ Kullanım:\n"
-            "/p\n"
-            "/p 20\n"
-            "/p btc"
-        )
-
-    except Exception as e:
-        logger.error(f"❌ /p error (user {user_id}): {e}", exc_info=True)
-        await message.answer(str(e))
-"""
-
-
-@router.message(Command("p"))
+"""@router.message(Command("p"))
 async def price_command(message: Message, bot: Bot):
     user_id = message.from_user.id
     args = message.text.split()[1:]
@@ -546,9 +496,59 @@ async def price_command(message: Message, bot: Bot):
     except Exception as e:
         logger.error(f"❌ /p error (user {user_id}): {e}", exc_info=True)
         await message.answer(str(e))
+"""
 
 
+@router.message(Command("p"))
+async def price_command(message: Message, bot: Bot):
+    user_id = message.from_user.id
+    args = message.text.split()[1:]
 
+    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+
+    try:
+        # 1️⃣ /p → WATCHLIST coinleri (hacme göre değil!)
+        if not args:
+            data = await price_handler.get_filtered_tickers(user_id, DEFAULT_SYMBOLS)
+            
+            title = f"💰 **WATCHLIST Coinleri ({len(data)} coin)**"
+            await send_coin_list(message, title, data)
+            return
+
+        # 2️⃣ /p n → hacimli ilk n coin (eski davranış)
+        if len(args) == 1 and args[0].isdigit():
+            limit = int(args[0])
+
+            if limit <= 0:
+                raise ValueError("❌ n 0'dan büyük olmalı")
+
+            limit = min(limit, SCAN_MAX)
+            data = await price_handler.get_top_volume(user_id, limit)
+
+            title = f"🔥 **Binance Top {limit} Coin (Hacme Göre)**"
+            await send_coin_list(message, title, data)
+            return
+
+        # 3️⃣ /p btc  OR  /p bnb sol btc → coin bilgileri
+        symbols = [price_handler.normalize_symbol(a) for a in args]
+
+        data = await price_handler.get_filtered_tickers(user_id, symbols)
+
+        if not data or len(data) != len(symbols):
+            missing = set(symbols) - {c.symbol for c in data}
+            raise RuntimeError(
+                f"❌ Veri bulunamadı: {', '.join(m.replace('USDT','') for m in missing)}"
+            )
+
+        title = f"💰 **Coin Fiyatları ({len(data)} coin)**"
+        await send_coin_list(message, title, data)
+
+    except Exception as e:
+        logger.error(f"❌ /p error (user {user_id}): {e}", exc_info=True)
+        await message.answer(str(e))
+        
+
+# izleme listesinden bağımsız hacm göre ilk n sembol
 @router.message(Command("pg"))
 async def gainers_command(message: Message, bot: Bot):
     """Top gainers command"""
@@ -613,6 +613,31 @@ async def volume_command(message: Message, bot: Bot):
         await send_coin_list(message, title, data)
     except Exception as e:
         logger.error(f"❌ Error in /pv for user {user_id}: {e}")
+        await message.answer("❌ Veri alınırken bir hata oluştu.")
+
+
+@router.message(Command("pwl"))
+async def watchlist_command(message: Message, bot: Bot):
+    """Show WATCHLIST coins"""
+    user_id = message.from_user.id
+    args = message.text.split()[1:]
+    
+    limit = len(DEFAULT_SYMBOLS)
+    if args and args[0].isdigit():
+        limit = min(int(args[0]), len(DEFAULT_SYMBOLS))
+    
+    logger.info(f"📋 /pwl command from user {user_id}")
+    
+    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+    
+    try:
+        symbols = DEFAULT_SYMBOLS[:limit]
+        data = await price_handler.get_filtered_tickers(user_id, symbols)
+        
+        title = f"📋 **WATCHLIST Coinleri ({len(data)} coin)**"
+        await send_coin_list(message, title, data)
+    except Exception as e:
+        logger.error(f"❌ Error in /pwl for user {user_id}: {e}")
         await message.answer("❌ Veri alınırken bir hata oluştu.")
 
 
@@ -688,13 +713,16 @@ async def plist(message: Message):
     """List all available commands"""
     
     commands = [
-        "/debug_config - p handler için config bilgisi",
-        "/debug_endpoints - yaml deki endpoints listesi", 
-        "/debug_status - handler durum bilgisi",
-        "/p - Price command",
+        "/p - WATCHLIST coinlerini göster",
+        "/p n - Hacimli ilk n coin",
+        "/p btc eth sol - Belirli coinlerin fiyatı",
+        "/pwl - Sadece WATCHLIST coinleri",
+        "/pv - Hacimli coinler (top volume)",
         "/pg - Top gainers", 
         "/pl - Top losers",
-        "/pv - Top volume"
+        "/debug_config - Config bilgisi",
+        "/debug_endpoints - Endpoint listesi", 
+        "/debug_status - Handler durumu"
     ]
     
     response = "📋 **Available Commands**\n" + "\n".join(commands)
