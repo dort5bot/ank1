@@ -1,7 +1,16 @@
-# .gitignore içine ekle
+# .gitignore içi
+
+# ENV
 .env
 *.env.local
 *.env.*.local
+
+# Secrets
 secrets/
 keys/
 certificates/
+
+# data klasör içi daima korunacak
+# Runtime data (DO NOT TRACK)
+/data/
+*.db
