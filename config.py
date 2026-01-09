@@ -1,74 +1,64 @@
 # config.py
 import os
+import platform
 import logging
-import sys
+from typing import List, Optional
 from enum import Enum
-from typing import List, Optional, Any, Dict, ClassVar
 from pathlib import Path
 from functools import lru_cache
-# from dotenv import load_dotenv
+
 from pydantic import Field, field_validator, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from cryptography.fernet import Fernet
-
-
 logger = logging.getLogger("BotConfig")
+
 
 class Environment(str, Enum):
     PRODUCTION = "production"
     TESTNET = "testnet"
     DEVELOPMENT = "development"
-   
+
+
 class Settings(BaseSettings):
     """
     Tüm bot yapılandırmasını tek merkezden yöneten ana sınıf.
-    Pydantic V2 kullanarak otomatik tip dönüşümü ve validasyon sağlar.
+    Pydantic v2 kullanır.
     """
+
     model_config = SettingsConfigDict(
-        env_file=".env", 
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        case_sensitive=False
+        case_sensitive=False,
     )
 
-    # --- CORE BOT SETTINGS ---
+    # ------------------------------------------------------------------
+    # CORE BOT SETTINGS
+    # ------------------------------------------------------------------
     TELEGRAM_TOKEN: str
     TELEGRAM_NAME: str = "binance_bot"
     ADMIN_IDS: List[int] = Field(default_factory=list)
     DEBUG: bool = False
     ENV: Environment = Environment.PRODUCTION
-    
-    # --- BINANCE CREDENTIALS ---
+
+    # ------------------------------------------------------------------
+    # BINANCE
+    # ------------------------------------------------------------------
     BINANCE_API_KEY: str = ""
     BINANCE_API_SECRET: str = ""
     ENABLE_TRADING: bool = False
-    
-    # --- WEBHOOK / DEPLOYMENT ---
-    """
-    @computed_field
-    @property
-    def BOT_MODE(self) -> str:
-        return "webhook" if self.WEBHOOK_HOST else "polling"
-    """
+
+    # ------------------------------------------------------------------
+    # WEBHOOK / DEPLOYMENT
+    # ------------------------------------------------------------------
+    PORT: int = 3000
+    WEBHOOK_HOST: Optional[str] = None
+    WEBHOOK_SECRET: str = ""
+
     @computed_field
     @property
     def BOT_MODE(self) -> str:
         return "webhook" if self.ENV == Environment.PRODUCTION else "polling"
-
-
-    # Render, Oracle, Heroku gibi platformlarda otomatik PORT atanır
-    PORT: int = Field(default=3000, alias="PORT") 
-    WEBHOOK_HOST: Optional[str] = None
-    WEBHOOK_SECRET: str = ""
-
-    """
-    @computed_field
-    @property
-    def WEBHOOK_URL(self) -> str:
-        if not self.WEBHOOK_HOST: return ""
-        return f"{self.WEBHOOK_HOST.rstrip('/')}/webhook/{self.TELEGRAM_TOKEN}"
-    """
 
     @computed_field
     @property
@@ -77,88 +67,109 @@ class Settings(BaseSettings):
             return ""
         return f"{self.WEBHOOK_HOST.rstrip('/')}/webhook"
 
-
-
-
-    # --- ENCRYPTION & SECURITY ---
-    MASTER_KEY: str = Field(default="")
-    
-    # DATABASE_URL: str = "data/apikeys.db"
-    # RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", "/tmp/zbot1"))
+    # ------------------------------------------------------------------
+    # RUNTIME / DATA
+    # ------------------------------------------------------------------
     RUNTIME_DIR: Path = Field(default=Path("/tmp/zbot1"))
 
-    # DATABASE_URL: str = str(RUNTIME_DIR / "data" / "apikeys.db")
+    @computed_field
+    @property
+    def DATA_DIR(self) -> Path:
+        env_path = os.getenv("DATABASE_PATH")
+        if env_path:
+            return Path(env_path)
+
+        if platform.system() == "Windows":
+            return Path.cwd() / "data"
+
+        base_dir = Path("/home/ubuntu/bot_persistence")
+        if not base_dir.parent.exists():
+            return Path.cwd() / "data"
+
+        return base_dir / "data"
 
     @computed_field
     @property
     def DATABASE_URL(self) -> str:
-        return str(self.RUNTIME_DIR / "data" / "apikeys.db")
+        self.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return str(self.DATA_DIR / "apikeys.db")
 
-
+    # ------------------------------------------------------------------
+    # SECURITY
+    # ------------------------------------------------------------------
+    MASTER_KEY: str
 
     @field_validator("MASTER_KEY", mode="before")
     @classmethod
     def validate_master_key(cls, v: str) -> str:
-        """Anahtar yoksa oluşturur veya geçerli olup olmadığını kontrol eder."""
-        if not v:
-            # Fallback mantığı: Çevresel değişkenlerde ara
-            for alt in ["ENCRYPTION_KEY", "FERNET_KEY"]:
-                if os.getenv(alt): return os.getenv(alt)
-            
-            # Hala yoksa geçici anahtar üret (Data klasörüne yaz)
-            logger.warning("🚨 MASTER_KEY bulunamadı! Geçici anahtar üretiliyor.")
-            new_key = Fernet.generate_key().decode()
-            return new_key
+        """
+        MASTER_KEY:
+        - ZORUNLU
+        - Fallback YOK
+        - Otomatik üretim YOK
+        """
+        if not v or not v.strip():
+            raise ValueError(
+                "❌ MASTER_KEY tanımlı değil! "
+                ".env veya environment variable olarak SET EDİLMELİ."
+            )
         return v
 
-
-    # market_collector  için zamanlayıcı 10 dk
+    # ------------------------------------------------------------------
+    # OTHER SETTINGS
+    # ------------------------------------------------------------------
     COLLECT_INTERVAL_SECONDS: int = Field(
         default=600,
-        description="Market collector çalışma aralığı (saniye)"
+        description="Market collector çalışma aralığı (saniye)",
     )
 
+    SCAN_SYMBOLS: List[str] = Field(
+        default=[
+            "BTCUSDT","ETHUSDT","BNBUSDT",
+            "SOLUSDT","ARPAUSDT","PEPEUSDT",
+            "FETUSDT","TURBOUSDT","SUIUSDT",
+        ]
+    )
 
-
-    # --- SCAN & TRADING PARAMS ---
-    # p12_handler, a11_handler için - sadece sembol listesi
-    SCAN_SYMBOLS: List[str] = Field(default = [
-        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ARPAUSDT", 
-        "PEPEUSDT", "FETUSDT", "TURBOUSDT", "SUIUSDT"
-    ])
-    # SİL: Diğer handler'lar için gerekebilecek ayarlar KULLANILMIYORSA
-    SCAN_DEFAULT_COUNT: int = 50
+    SCAN_DEFAULT_COUNT: int = 100
     MAX_LEVERAGE: int = 3
-    
-    # --- REDIS (AIOGRAM FSM) ---
+
     USE_REDIS: bool = False
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # --- BINANCE API INTERNAL (Sabitler) ---
     BINANCE_BASE_URL: str = "https://api.binance.com"
     BINANCE_TESTNET_URL: str = "https://testnet.binance.vision"
     RECV_WINDOW: int = 5000
 
-    def validate_setup(self):
-        """Kritik kontrolleri yapar."""
+    # ------------------------------------------------------------------
+    # FINAL VALIDATION
+    # ------------------------------------------------------------------
+    def validate_setup(self) -> None:
+        """
+        Kritik kontroller.
+        UYGULAMA ÖLDÜRMEZ.
+        SADECE HATA FIRLATIR.
+        """
         if not self.TELEGRAM_TOKEN:
-            logger.error("❌ TELEGRAM_TOKEN eksik!")
-            sys.exit(1)
-        
-        if self.ENABLE_TRADING and (not self.BINANCE_API_KEY or not self.BINANCE_API_SECRET):
-            logger.warning("⚠️ Trading aktif ama API anahtarları eksik!")
+            raise RuntimeError("❌ TELEGRAM_TOKEN eksik!")
 
-        # Veritabanı klasörünü oluştur
-        db_path = Path(self.DATABASE_URL).parent
-        if db_path: db_path.mkdir(parents=True, exist_ok=True)
+        if self.ENABLE_TRADING and (
+            not self.BINANCE_API_KEY or not self.BINANCE_API_SECRET
+        ):
+            logger.warning(
+                "⚠️ Trading aktif ama BINANCE API anahtarları eksik!"
+            )
 
 
-# --- SINGLETON INSTANCE ---
-@lru_cache()
+# ----------------------------------------------------------------------
+# SINGLETON
+# ----------------------------------------------------------------------
+@lru_cache
 def get_settings() -> Settings:
     settings = Settings()
     settings.validate_setup()
     return settings
 
-# Kolay erişim için instance
+
+# Kolay erişim
 config = get_settings()
