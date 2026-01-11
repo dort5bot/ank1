@@ -65,6 +65,7 @@ async def init_db():
                 price REAL,
                 open_interest REAL,
                 funding_rate REAL,
+                volume REAL,
                 PRIMARY KEY (ts, symbol, source)
             );
         """)
@@ -163,7 +164,7 @@ async def fetch_with_strict_limit(session, chunk, headers, ts):
 
 
 # → TEK session açar
-async def fetch_all_data():
+"""async def fetch_all_data():
     # Listeleri burada birleştirin (set kullanımı mükerrer kaydı önler)
     symbols = list(set(INDEX_BASKET + WATCHLIST + ["BTCUSDT"]))
     ts = int(time.time())
@@ -193,19 +194,64 @@ async def fetch_all_data():
         final_rows.extend(coinalyze_rows)
 
     return final_rows
+"""
 
+# market_collector.py içindeki fetch_all_data güncellenmiş hali
+# price + 24 saatlik kümülatif hacim
+async def fetch_all_data():
+    symbols = list(set(INDEX_BASKET + WATCHLIST + ["BTCUSDT"]))
+    ts = int(time.time())
+    final_rows = []
+
+    async with aiohttp.ClientSession() as session:
+        # 1. BINANCE TOPLU FİYAT VE HACİM ÇEKME
+        try:
+            # ticker/24hr hem fiyat (lastPrice) hem hacim (quoteVolume) verir
+            async with session.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10) as r:
+                if r.status == 200:
+                    all_tickers = await r.json()
+                    # Sözlük yapısı: { "BTCUSDT": {"price": 50000, "vol": 1000000}, ... }
+                    ticker_dict = {
+                        t['symbol']: {
+                            "price": float(t['lastPrice']), 
+                            "volume": float(t['quoteVolume']) # USDT bazlı hacim
+                        } 
+                        for t in all_tickers if t['symbol'] in symbols
+                    }
+                    
+                    for s in symbols:
+                        if s in ticker_dict:
+                            final_rows.append({
+                                "ts": ts, "symbol": s, "source": "binance",
+                                "price": ticker_dict[s]["price"],
+                                "volume": ticker_dict[s]["volume"], # ⬅️ DB'ye gidecek
+                                "category": "basket"
+                            })
+        except Exception as e:
+            print(f"⚠️ Binance Veri Hatası: {e}")
+
+        # 2. COINALYZE (OI ve Funding çekmeye devam eder)
+        coinalyze_rows = await fetch_coinalyze_data(session, symbols)
+        final_rows.extend(coinalyze_rows)
+
+    return final_rows
+
+
+# market_collector.py içindeki collect_once metodu
 async def collect_once():
     await init_db()
     rows = await fetch_all_data()
 
+    # volume eklendi
     sql = """INSERT OR REPLACE INTO snapshot 
-             (ts, symbol, source, category, price, open_interest, funding_rate) 
-             VALUES (?,?,?,?,?,?,?)"""
+             (ts, symbol, source, category, price, open_interest, funding_rate, volume) 
+             VALUES (?,?,?,?,?,?,?,?)"""
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executemany(sql, [
             (r["ts"], r["symbol"], r["source"], r["category"],
-             r.get("price"), r.get("open_interest"), r.get("funding_rate"))
+             r.get("price"), r.get("open_interest"), r.get("funding_rate"), 
+             r.get("volume")) # ⬅️ eklendi
             for r in rows
         ])
         await db.commit()

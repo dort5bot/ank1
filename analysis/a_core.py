@@ -641,93 +641,121 @@ class CoreAnalysisEngine:
 
 # ------------------------------------------------------------
 # 6. 'ap' işlemlerini (Alt Power) yöneten motor.
-class MarketContextEngine:
     """
     Eski koddaki 'ap' işlemlerini (Alt Power) yöneten motor.
     Sepet bazlı (Alt vs BTC, OI Trend vb.) analizleri yapar.
     API'den veri çekmez
     veritabanını okuyan db_loader.py modülünü kullan
+    
+    Metrik	Yeni Öneri	Neden?
+    Hacim (Volume)	Hacim ağırlıklı ortalama.	Shitcoinlerin spekülatif hareketleri endeksi bozmaz.
+    Zaman Ağırlığı	5dk, 1sa ve 4sa ağırlıklı.	Kısa süreli "fake" fitilleri eler, trendi yakalar.
+    Normalizasyon	Daraltılmış/Dinamik aralık.	Mikabot gibi hassas sonuçlar için -0.005 yerine -0.003 gibi daha dar eşikler tepkiyi artırır.
+    OI Analizi	Son 1 saatlik ivme.	Akümülasyonu ve ani para girişini daha iyi ölçer.
+    
+    Piyasayı çok daha hassas okuyan, volatiliteye duyarlı (ATR tabanlı) ve hacim ağırlıklı kod
+    - Durgun Piyasada "Yalancı" Sinyalleri Önler:
+    - Sert Piyasada Skorun "Kör" Olmasını Engeller:
+    - Mikabot Benzeri "Gerçekçi" Sonuç: Mikabot gibi profesyonel araçlar 
+    "göreceli" güç ölçer. Yani bir veriyi sadece rakam olarak değil, "son 24 saatin normaline göre ne kadar saptığına" bakarak puanlar.
+    - Ters Funding Skalası: Funding yükseldikçe (longlar maliyetlendikçe) yapısal riski artırıp skoru hafifçe aşağı çektik (daha gerçekçi bir piyasa baskısı okuması).
+    
     """
+
+# 6. 'ap' işlemlerini (Alt Power) yöneten motor.
+class MarketContextEngine:
     
     @staticmethod
     def scale_0_100(value: float, min_val: float, max_val: float) -> float:
-        """Sabit ölçekli normalizasyon - İşlev korundu."""
+        """Dinamik veya sabit aralıklarla normalizasyon yapar."""
         if min_val == max_val: return 50.0
+        # Değerlerin yönünü koruyarak (ters skala gerekirse min > max olabilir)
         norm = (value - min_val) / (max_val - min_val)
         return float(np.clip(norm * 100, 0, 100))
 
     def calculate_alt_power(self, df_raw: pd.DataFrame, INDEX_REPORT: List[str]) -> Dict[str, float]:
         """
-        Paylaştığınız 'calculate_alt_power' fonksiyonunun modernize edilmiş, 
-        hata toleransı artırılmış hali.
+        Gelişmiş AP Hesaplama: 
+        1. Hacim Ağırlıklı (VWAP Mantığı)
+        2. Volatiliteye Duyarlı (ATR Bazlı Ölçekleme)
+        3. Çoklu Zaman Dilimi Ağırlıklandırması
         """
         if df_raw.empty:
             return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0}
 
-        # --- 1. ZAMAN SENKRONİZASYONU ---
+        # --- 1. VERİ TEMİZLEME & HAZIRLIK ---
         df = df_raw.copy()
-        # Saniyeleri dakikaya yuvarla (İşlev korundu)
-        df['ts'] = (df['ts'] // 60) * 60 
-        
-        # Veriyi temizle ve grupla
         df_clean = df.groupby(['ts', 'symbol']).agg({
-            'price': 'last',           # max yerine last daha güvenli fiyattır
-            'open_interest': 'max',
-            'funding_rate': 'last'
+            'price': 'last',
+            'open_interest': 'last',
+            'funding_rate': 'last',
+            'volume': 'sum'
         }).reset_index().sort_values('ts')
 
-        unique_ts = df_clean['ts'].unique()
-        if len(unique_ts) < 2:
-            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0, "status": "pending"}
-
-        # --- 2. PIVOT TABLOLAR (Vektörel Hesaplama İçin) ---
-        prices_pivot = df_clean.pivot(index="ts", columns="symbol", values="price").ffill()
+        # Pivot Tablolar
+        prices = df_clean.pivot(index="ts", columns="symbol", values="price").ffill()
+        volumes = df_clean.pivot(index="ts", columns="symbol", values="volume").ffill()
         
-        # --- 3. HESAPLAMALAR ---
+        available_alts = [s for s in INDEX_REPORT if s in prices.columns]
+        if not available_alts or len(prices) < 12: # En az 1 saatlik veri (5dk bar ile)
+            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0}
+
+        # --- 2. PİYASA OYNAKLIĞI (ATR) HESABI ---
+        # Son 24 barın (2 saat) standart sapmasını volatilite göstergesi olarak kullanalım
+        # Bu, skorumuzun 'yapışmasını' engelleyen dinamik filtredir.
+        market_volatility = prices[available_alts].pct_change().std().mean() 
+        # Eğer piyasa çok ölüyse minimum bir eşik belirleyelim (Örn: %0.1)
+        dynamic_threshold = max(market_volatility, 0.001)
+
+        # --- 3. ALT vs BTC (Hacim Ağırlıklı) ---
+        btc_ret = prices["BTCUSDT"].pct_change(1).iloc[-1] if "BTCUSDT" in prices.columns else 0
+        alt_rets = prices[available_alts].pct_change(1).iloc[-1]
+        alt_vols = volumes[available_alts].iloc[-1]
         
-        # A. Alt vs BTC (Short)
-        v_btc = 50.0
-        if "BTCUSDT" in prices_pivot.columns:
-            returns = prices_pivot.pct_change(1).iloc[-1]
-            btc_ret = returns["BTCUSDT"]
-            available_alts = [s for s in INDEX_REPORT if s in returns.index]
-            if available_alts:
-                avg_alt_ret = returns[available_alts].mean()
-                v_btc = self.scale_0_100(avg_alt_ret - btc_ret, -0.005, 0.005)
+        # Büyük altcoinlerin etkisi daha yüksek
+        weighted_alt_ret = (alt_rets * alt_vols).sum() / (alt_vols.sum() + 1e-9)
+        
+        # Dinamik ölçek: Volatilitenin 0.5 katı fark normal karşılanır
+        v_btc = self.scale_0_100(weighted_alt_ret - btc_ret, -dynamic_threshold * 0.5, dynamic_threshold * 0.5)
 
-        # B. Alt Momentum (Short Term Strength)
-        v_short = 50.0
-        if len(prices_pivot) >= 5:
-            returns_5 = prices_pivot.pct_change(5).iloc[-1]
-            available_alts = [s for s in INDEX_REPORT if s in returns_5.index]
-            if available_alts:
-                v_short = self.scale_0_100(returns_5[available_alts].mean(), -0.02, 0.02)
+        # --- 4. ALT MOMENTUM (Zaman Ağırlıklı) ---
+        # Kısa (5dk), Orta (1sa), Uzun (4sa) değişimlerin ortalaması
+        ret_5m = prices[available_alts].pct_change(1).iloc[-1].mean()
+        ret_1h = prices[available_alts].pct_change(12).iloc[-1].mean() if len(prices) >= 12 else ret_5m
+        ret_4h = prices[available_alts].pct_change(48).iloc[-1].mean() if len(prices) >= 48 else ret_1h
+        
+        # Öneri: %50 kısa, %30 orta, %20 uzun
+        combined_mom = (ret_5m * 0.5) + (ret_1h * 0.3) + (ret_4h * 0.2)
+        
+        # Dinamik ölçek: Momentum eşiği volatiliteye göre esner
+        v_short = self.scale_0_100(combined_mom, -dynamic_threshold * 2, dynamic_threshold * 2)
 
-        # C. Long Term Strength (OI & Funding)
-        v_long = 50.0
+        # --- 5. YAPISAL GÜÇ (OI & Funding) ---
         try:
             oi_pivot = df_clean.pivot(index="ts", columns="symbol", values="open_interest").ffill()
-            available_alts = [s for s in INDEX_REPORT if s in oi_pivot.columns]
+            # OI İvmesi (Son 1 saatlik değişim)
+            oi_change = (oi_pivot[available_alts].iloc[-1] / oi_pivot[available_alts].iloc[-12]) - 1
             
-            if available_alts and len(oi_pivot) >= 2:
-                # OI Değişimi
-                oi_change = (oi_pivot[available_alts].iloc[-1] / oi_pivot[available_alts].iloc[0]) - 1
-                oi_score = self.scale_0_100(oi_change.mean(), -0.05, 0.05)
-                
-                # Funding
-                fund_avg = df_clean[df_clean['symbol'].isin(available_alts)].groupby('symbol')['funding_rate'].last().mean()
-                fund_score = self.scale_0_100(fund_avg, 0.05, -0.01) # Ters skala
-                
-                v_long = (oi_score * 0.7) + (fund_score * 0.3)
-        except Exception:
-            pass
+            # OI için sabit eşik daha sağlıklıdır çünkü OI fiyattan bağımsız şişebilir
+            oi_score = self.scale_0_100(oi_change.mean(), -0.05, 0.05)
+            
+            # Funding (Düşük/Negatif funding yükseliş için daha sağlıklı 'duvar' sağlar)
+            fund_avg = df_clean[df_clean['symbol'].isin(available_alts)].groupby('symbol')['funding_rate'].last().mean()
+            # 0.01 pozitif funding (pahalı), -0.01 negatif funding (ucuz)
+            fund_score = self.scale_0_100(fund_avg, 0.015, -0.005) 
+            
+            v_long = (oi_score * 0.7) + (fund_score * 0.3)
+        except:
+            v_long = 50.0
 
         return {
             "alt_vs_btc_short": round(float(v_btc), 1),
             "alt_short_term": round(float(v_short), 1),
-            "coin_long_term": round(float(v_long), 1),
+            "coin_long_term": round(float(v_long), 1)
         }
-     
+        
+
+
 
 # ------------------------------------------------------------
 # 7. Handler burayı çağıracak
