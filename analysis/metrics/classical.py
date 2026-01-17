@@ -703,8 +703,8 @@ def roc(data: pd.DataFrame, **params) -> float:
         raise ValueError("roc: data must contain 'close' column")
     
     close = data["close"]
-    roc_value = close.pct_change(periods=period) * 100
-    
+    roc_value = close.pct_change(periods=period, fill_method=None) * 100
+
     return finalize_metric(roc_value, "roc")
 
 

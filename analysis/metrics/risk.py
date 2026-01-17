@@ -7,7 +7,7 @@ Pure mathematical risk calculations with automatic normalization.
 funding_risk: Funding rate’in normalden ne kadar uzaklaştığını ölçer
 funding_stress_risk: Funding rate’in oynaklığını (volatility) ölç
 """
-
+# analysis/metrics/risk.py
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Tuple, Union, Optional
@@ -534,70 +534,6 @@ def extract_scalar_from_result(result: Any) -> float:
 # TEK adaptasyon fonksiyonu.
 # Raw depth data -> [side, price, size] DataFrame
     
-"""def _adapt_orderbook(data: Any, top_n: int = 20) -> pd.DataFrame:
-
-    # Case 1: Already in correct format
-    if isinstance(data, pd.DataFrame) and 'side' in data.columns:
-        return data
-    
-    # Case 2: Raw Binance depth dict
-    if isinstance(data, dict) and 'bids' in data:
-        rows = []
-        
-        # Bids (highest to lowest)
-        bids = data.get('bids', [])[:top_n]
-        for i, (price_str, size_str) in enumerate(bids):
-            try:
-                rows.append({
-                    'level': i,
-                    'side': 'bid',
-                    'price': float(price_str),
-                    'size': float(size_str)
-                })
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"Invalid bid data at level {i}: {e}")
-        
-        # Asks (lowest to highest)
-        asks = data.get('asks', [])[:top_n]
-        for i, (price_str, size_str) in enumerate(asks):
-            try:
-                rows.append({
-                    'level': i + len(bids),  # Continue numbering
-                    'side': 'ask',
-                    'price': float(price_str),
-                    'size': float(size_str)
-                })
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"Invalid ask data at level {i}: {e}")
-        
-        if not rows:
-            raise ValueError("No valid order book data found")
-        
-        df = pd.DataFrame(rows)
-        
-        # Sort bids descending, asks ascending
-        df_bids = df[df['side'] == 'bid'].sort_values('price', ascending=False)
-        df_asks = df[df['side'] == 'ask'].sort_values('price', ascending=True)
-        
-        return pd.concat([df_bids, df_asks], ignore_index=True)
-    
-    # Case 3: List of tuples/arrays
-    if isinstance(data, list):
-        # Try to infer format
-        if len(data) > 0:
-            first_item = data[0]
-            if isinstance(first_item, (list, tuple)) and len(first_item) >= 4:
-                # [level, side, price, size] format
-                return pd.DataFrame(data, columns=['level', 'side', 'price', 'size'])
-            elif isinstance(first_item, dict) and 'side' in first_item:
-                # List of dicts
-                return pd.DataFrame(data)
-    
-    raise TypeError(f"Cannot adapt orderbook data. Type: {type(data)}, Value: {data}")
-"""
-
-# risk.py - _adapt_orderbook'u SADECE ŞUNUNLA DEĞİŞTİR:
-
 def _adapt_orderbook(data: Any, top_n: int = 20) -> pd.DataFrame:
     """
     Core'dan gelen formatları kabul eden tek adaptasyon.
