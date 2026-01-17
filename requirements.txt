@@ -12,11 +12,14 @@ ccxt==4.3.89
 python-binance>=1.0.19
 beautifulsoup4
 
+curl_cffi	#ETF için
+
 # --- web frameworks
 fastapi>=0.110.0
 flask==2.3.3
 httpx>=0.24.0,<0.25
 nest-asyncio==1.5.7
+
 
 # --- numerics / data science
 numpy==1.26.4
