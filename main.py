@@ -6,7 +6,7 @@ USE_WEBHOOK= buna gerek yok, otomotik yapıyor
 WEBHOOK_HOST var/ yok ile yapıyor
 """
 
-# main.py - İYİLEŞTİRİLMİŞ IMPORT
+# main.py
 import os
 import sys
 import asyncio
@@ -45,9 +45,14 @@ from utils.binance_api.binance_exceptions import BinanceAPIError, BinanceAuthent
 
 # main.py (global scope)
 from analysis.a_core import _engine as core_engine
+from utils.notifier import TelegramNotifier
 
-
-from analysis.market_collector import collect_once
+# from analysis.market_collector import 
+from analysis.market_collector import (
+    DataManager, MarketCollector, CoingeckoCollector, 
+    MarketAnalyzer, check_and_notify, BTCDataUnavailable,
+    DB_PATH, CG_CYCLE_LIMIT
+)
 
 # ---------------------------------------------------------------------
 # Global instances - LOGGER
@@ -897,103 +902,80 @@ async def start_periodic_cleanup():
 
 
 # ---------------------------------------------------------------------
-# BACKGROUND TASKS - 10dk arayla veri toplar - sürekli
+# AP için BACKGROUND TASKS - 10dk arayla veri toplar - sürekli main.py
 # ---------------------------------------------------------------------
+"""
+Bot ile birlikte çalışan arka plan market collector
+- İlk çalışmayı hemen yapar
+- Sonraki çalışmaları COLLECT_INTERVAL_SECONDS'e göre yapar
+"""
+             
 async def background_market_collector():
-    """Bot ile birlikte çalışan arka plan market collector
-    - İlk çalışmayı hemen yapar
-    - Sonraki çalışmaları COLLECT_INTERVAL_SECONDS'e göre yapar
-    """
-    logger.info("📡 Background market collector started")
+    logger.info("📡 Background market collector started (Immediate Start)")
 
+    db_manager = DataManager(DB_PATH)
+    await db_manager.init_db()
+    
+    notifier = TelegramNotifier()
+    analyzer = MarketAnalyzer(DB_PATH)
+    
     interval = config.COLLECT_INTERVAL_SECONDS
-    first_run = True
+    cycle = 0
 
     while not shutdown_event.is_set():
+        # --- DÖNGÜ BAŞI: HEMEN İŞLEME BAŞLA ---
         start_time = time.time()
+        # logger.info(f"🔄 Cycle {cycle} başlatılıyor... Veriler çekiliyor.")
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                ts = int(time.time())
+                mc = MarketCollector(session)
+                cc = CoingeckoCollector(session)
 
-        try:
-            rows = await collect_once()
-            logger.info(f"📥 Collector: {rows} kayıt yazıldı")
-        except Exception as e:
-            logger.error(f"❌ Collector error: {e}", exc_info=True)
+                # 1. Veri Toplama (Burada bekler)
+                bi_data = await mc.fetch_binance(ts)
+                cz_data = await mc.fetch_coinalyze(ts)
+                logger.info(f"✅ Cycle {cycle}: {len(bi_data)} Binance, {len(cz_data)} Coinalyze verisi kaydedildi.")
+                
+                # 2. Kayıt ve Analiz
+                await db_manager.save_market_data(bi_data, cz_data)
 
-        # İlk çalışmadan sonra bekleme başlar
+                if cz_data:
+                    await check_and_notify(notifier, analyzer)
+
+                # 3. Coingecko (Periyodik)
+                if cycle % CG_CYCLE_LIMIT == 0:
+                    g, c, b = await cc.fetch_all()
+                    await db_manager.save_cg_snapshot(g, c, b)
+                    logger.info("🌐 Coingecko verileri güncellendi.")
+
+                cycle += 1
+                retry_count = 0 # Başarılıysa retry'ı sıfırla
+
+            except Exception as e:
+                logger.error(f"❌ Collector Hatası: {e}")
+                # Hata durumunda 10dk beklemeyip 30sn sonra tekrar denemesi için:
+                await asyncio.sleep(30)
+                continue 
+
+        # --- DÖNGÜ SONU: İŞLEM BİTTİ, ŞİMDİ SAYAÇ BAŞLASIN ---
         elapsed = time.time() - start_time
         sleep_time = max(0, interval - elapsed)
-
+        
+        logger.info(f"💤 Cycle {cycle-1} tamamlandı. {int(sleep_time)} saniye bekleniyor...")
+        
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=sleep_time)
         except asyncio.TimeoutError:
-            pass
+            pass # Bekleme süresi normal doldu, yeni döngüye geç
+
 
 
 # ---------------------------------------------------------------------
 # OPTIMIZED MAIN ENTRY POINT - CONFIG TABANLI
 # ---------------------------------------------------------------------
 # Config tabanlı çift modlu main entry
-
-"""async def app_entry():
-    print("DEBUG: app_entry started")
-    global runner, bot, dispatcher
-
-    try:
-        async with lifespan(config):
-
-            port_env = os.getenv("PORT")
-
-            if port_env:
-                app = await create_app()
-
-                runner = web.AppRunner(app)
-                await runner.setup()
-
-                site = web.TCPSite(runner, "0.0.0.0", int(port_env))
-                await site.start()
-
-                print(f"HTTP server listening on {port_env}")
-                await shutdown_event.wait()
-
-            else:
-                await bot.delete_webhook(drop_pending_updates=True)
-                await dispatcher.start_polling(bot)
-
-    finally:
-        await cleanup_resources()
-"""
-
-"""async def app_entry():
-    print("DEBUG: app_entry started")
-    global runner, bot, dispatcher
-
-    try:
-        async with lifespan(config):
-
-            if config.BOT_MODE == "webhook":
-
-                app = await create_app()
-
-                runner = web.AppRunner(app)
-                await runner.setup()
-
-                port = int(os.getenv("PORT", 3000))
-                site = web.TCPSite(runner, "0.0.0.0", port)
-                await site.start()
-
-                await shutdown_event.wait()
-
-            else:
-                await bot.delete_webhook(drop_pending_updates=True)
-                await dispatcher.start_polling(bot)
-
-
-
-
-    finally:
-        await cleanup_resources()
-"""
-
-
 
 # main.py
 async def app_entry():
@@ -1070,13 +1052,6 @@ async def create_app() -> web.Application:
 # ---------------------------------------------------------------------
 # POLLING MODU İÇİN SHUTDOWN DESTEĞİ
 # ---------------------------------------------------------------------
-# async def stop_polling():
-    # """Polling modunu durdur"""
-    # global dispatcher, bot
-    # if dispatcher:
-        # await dispatcher.stop_polling()
-        # logger.info("✅ Polling stopped")
-
 
 # Signal handler
 async def shutdown_async():
@@ -1111,12 +1086,6 @@ async def shutdown_async():
 
     logger.info("✅ Graceful shutdown completed")
 
-
-"""def handle_shutdown(signum, frame):
-    logger.info(f"🛑 Received signal {signum}")
-    loop = asyncio.get_event_loop()
-    loop.create_task(shutdown_async())
-"""
 
 def handle_shutdown(signum, frame):
     logger.info(f"🛑 Signal {signum} received")
