@@ -1,265 +1,315 @@
-# analysis/market_collector.py
+# market_collector.py - YENİ
 """
-python analysis/market_collector.py
-
 bağımsız çlıştır
 python -m analysis.market_collector
 
-*veri toplama peryodu
-10 dakika, anlık momentumu yakalamak ile API limitlerini zorlamamak arasındaki "tatlı nokta"dır
-
-*BTC Kıyaslaması ve Veri Kapsamı
-Kodun içerisinde symbols = ALT_BASKET + ["BTCUSDT"]
-
-*veri miktarı db için çerez sayılır
-Makul süre: 3 gün (72 saat) analiz için yeterlidir 
-ancak trendi görmek için 7 günlük veri sağlıklısıdır. 
-Yaklaşık 20.000 satır yapar ki bu DB performansını hiç etkilemez
-
- snapshot içeriği:
-ts         | symbol     | source    | category | price    | open_interest | funding_rate
-
-Open Interest (OI) değerinin aniden fırlaması, o coin'e büyük miktarda para girdiğini ve bir volatilite patlamasının yaklaştığını gösterir.
-OI Analizi Ne İşe Yarar?
-Normalde fiyat ve OI beraber hareket eder. Ancak şu iki durum senin için "altın" değerindedir:
-
-Fiyat Yatay + OI Sert Yukarı: 
-Balinalar sessizce pozisyon topluyor. Yakında sert bir kırılım (genelde yukarı) gelebilir.
-
-Fiyat Aşağı + OI Sert Yukarı: 
-İnsanlar düşüşe inatla "short" açıyor veya düşüşü satın alıyor. Bu durum genellikle bir "Short Squeeze" (fiyatın aniden yukarı patlaması) ile sonuçlanır.
-
 """
-# analysis/market_collector.py
+
 import os
 import time
+import logging
 import asyncio
 import aiohttp
 import aiosqlite
+from datetime import datetime
 from dotenv import load_dotenv
 
-# from analysis.a_core import FULL_COLLECT_LIST 
+# ETF için bağımlılıklar
+import re
+from typing import Dict, Any, List, Optional
+from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
+
+
 from analysis.a_core import INDEX_BASKET, WATCHLIST
-
 from handlers.market_report import format_table_response
-
 from utils.notifier import TelegramNotifier
 
 load_dotenv()
 
-DB_PATH = "data/market_snapshot.db"
-COINALYZE_API_KEY = os.getenv("COINALYZE_API_KEY")
+logger = logging.getLogger(__name__)
 
 # --- AYARLAR ---
-COLLECT_INTERVAL = 600  
-DATA_RETENTION_DAYS = 7 
-
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS snapshot (
-                ts INTEGER NOT NULL,
-                symbol TEXT NOT NULL,
-                source TEXT NOT NULL,
-                category TEXT DEFAULT 'temp',
-                price REAL,
-                open_interest REAL,
-                funding_rate REAL,
-                volume REAL,
-                PRIMARY KEY (ts, symbol, source)
-            );
-        """)
-        await db.commit()
-
-async def cleanup_db():
-    """Hibrit temizlik: temp veriler 1 saat, basket veriler 7 gün saklanır"""
-    now = int(time.time())
-    async with aiosqlite.connect(DB_PATH) as db:
-        # 1. Kural: Geçici sorgular (temp) 1 saatlik
-        await db.execute("DELETE FROM snapshot WHERE category = 'temp' AND ts < ?", (now - 3600,))
-        # 2. Kural: Takip listesi (basket) 7 günlük
-        await db.execute("DELETE FROM snapshot WHERE category = 'basket' AND ts < ?", (now - (DATA_RETENTION_DAYS * 86400),))
-        await db.commit()
-
-# → session parametresi alır
-async def fetch_coinalyze_data(session, symbols_ignored_here):
-    """
-    Öncelik sıralı veri çekme: 
-    1. BTC (Kritik)
-    2. INDEX_BASKET (Analiz için gerekli)
-    3. WATCHLIST (Kişisel takip)
-    """
-    results = []
-    ts = int(time.time())
-    headers = {"api_key": COINALYZE_API_KEY}
-
-    # --- 1. ADIM: BTC (Vazgeçilmez) ---
-    # BTC her zaman tek başına ve ilk sırada çekilir
-    btc_res = await fetch_with_strict_limit(session, ["BTCUSDT"], headers, ts)
-    if not btc_res:
-        print("❌ KRİTİK: BTC verisi alınamadı! Analiz tutarlılığı için işlem durduruluyor.")
-        return [] # Bu periyodu tamamen iptal et (fail-fast)
-    results.extend(btc_res)
-
-    # --- 2. ADIM: INDEX_BASKET (Yüksek Öncelik) ---
-    # BTC zaten alındığı için listeden çıkarıyoruz
-    index_only = [s for s in INDEX_BASKET if s != "BTCUSDT"]
-    # Chunk size 3, seri çekim (rate limit koruması)
-    index_res = await fetch_in_chunks(session, index_only, headers, ts, chunk_size=3, delay=1.0)
-    results.extend(index_res)
-
-    # --- 3. ADIM: WATCHLIST (Normal Öncelik) ---
-    # Önceki listelerde olmayanları ayıkla (Mükerrer isteği engeller)
-    watch_only = [s for s in WATCHLIST if s not in INDEX_BASKET and s != "BTCUSDT"]
-    if watch_only:
-        # Daha az kritik olduğu için chunk size biraz daha büyük olabilir
-        watch_res = await fetch_in_chunks(session, watch_only, headers, ts, chunk_size=5, delay=1.0)
-        results.extend(watch_res)
-
-    return results
+# --- YAPILANDIRMA ---
+DB_PATH = "data/market.db"
+COINALYZE_API_KEY = os.getenv("COINALYZE_API_KEY")
+COLLECT_INTERVAL = 600  # 10 Dakika (Binance & Coinalyze)
+CG_CYCLE_LIMIT = 36     # 6 Saatte bir Coingecko (36 * 10dk)
+CG_CATEGORY_LIMIT = 20  # kategori için ilk 20 grup
+DATA_RETENTION_DAYS = 7 # veri silinme süresi, (gün)
+ALLOWED_EXCHANGES = {"Binance", "OKX", "Bybit", "Coinbase Exchange"}
 
 
-async def fetch_in_chunks(session, symbols, headers, ts, chunk_size, delay):
-    """Verilen listeyi parçalar halinde ve bekleyerek çeker (Seri İşlem)"""
-    chunk_results = []
-    for i in range(0, len(symbols), chunk_size):
-        chunk = symbols[i:i + chunk_size]
-        # Mevcut fetch_with_retry mantığı ama daha kısa bekleme süreli
-        res = await fetch_with_strict_limit(session, chunk, headers, ts)
-        chunk_results.extend(res)
-        await asyncio.sleep(delay) # Her chunk arası güvenli bekleme
-    return chunk_results
-    
-async def fetch_with_strict_limit(session, chunk, headers, ts):
-    """Kritik veriler için sadece 1 kez kısa bekleyip tekrar dener."""
-    c_syms = ",".join(f"{s}_PERP.A" for s in chunk)
-    for attempt in range(2): 
-        try:
-            async with session.get(f"https://api.coinalyze.net/v1/open-interest?symbols={c_syms}", headers=headers) as r1, \
-                       session.get(f"https://api.coinalyze.net/v1/funding-rate?symbols={c_syms}", headers=headers) as r2:
+class BTCDataUnavailable(Exception):
+    """Kritik: BTC verisi olmadan analiz yapılamaz."""
+    pass
+
+class DataManager:
+    """Tüm tabloların yönetimini sağlar."""
+    def __init__(self, db_path):
+        self.db_path = db_path
+
+    async def init_db(self):
+        async with aiosqlite.connect(self.db_path) as db:
+            # Binance & Coinalyze Tabloları
+            await db.execute("CREATE TABLE IF NOT EXISTS bi_market (ts INTEGER, symbol TEXT, price REAL, volume REAL, category TEXT, PRIMARY KEY (ts, symbol))")
+            await db.execute("CREATE TABLE IF NOT EXISTS cz_derivatives (ts INTEGER, symbol TEXT, open_interest REAL, funding_rate REAL, category TEXT, PRIMARY KEY (ts, symbol))")
+            
+            # Coingecko Tabloları
+            await db.execute("CREATE TABLE IF NOT EXISTS cg_global (ts INTEGER PRIMARY KEY, total_mcap REAL, total_vol REAL, btc_dom REAL, eth_dom REAL)")
+            await db.execute("CREATE TABLE IF NOT EXISTS cg_categories (ts INTEGER, category_id TEXT, market_cap REAL, volume REAL, change_24h REAL, PRIMARY KEY (ts, category_id))")
+            await db.execute("CREATE TABLE IF NOT EXISTS cg_exchange_bias (ts INTEGER, coin TEXT, exchange TEXT, price REAL, PRIMARY KEY (ts, coin, exchange))")
+            
+           # ETF Tablosu
+            await db.execute("CREATE TABLE IF NOT EXISTS etf_flows (ts INTEGER, asset TEXT, date_str TEXT, total_flow REAL, PRIMARY KEY (ts, asset))")
                 
-                if r1.status == 200 and r2.status == 200:
-                    oi_raw = await r1.json()
-                    fr_raw = await r2.json()
-                    oi_lookup = {x['symbol']: x['value'] for x in oi_raw}
-                    fr_lookup = {x['symbol']: x['value'] for x in fr_raw}
+            await db.commit()
 
-                    rows = []
-                    for s in chunk:
-                        c_key = f"{s}_PERP.A"
-                        rows.append({
-                            "ts": ts, "symbol": s, "source": "coinalyze",
-                            "open_interest": oi_lookup.get(c_key),
-                            "funding_rate": fr_lookup.get(c_key),
-                            "category": "basket"
-                        })
-                    return rows
-                
-                if r1.status == 429 or r2.status == 429:
-                    await asyncio.sleep(2) # 429 ise kısa bekle ve son kez dene
-        except Exception as e:
-            print(f"⚠️ Fetch Hatası {chunk}: {e}")
-    return []
-    
+    async def save_market_data(self, bi_rows, cz_rows):
+        async with aiosqlite.connect(self.db_path) as db:
+            if bi_rows: await db.executemany("INSERT OR REPLACE INTO bi_market VALUES (?,?,?,?,?)", bi_rows)
+            if cz_rows: await db.executemany("INSERT OR REPLACE INTO cz_derivatives VALUES (?,?,?,?,?)", cz_rows)
+            await db.commit()
+
+    async def save_cg_snapshot(self, global_data, category_rows, bias_rows):
+        async with aiosqlite.connect(self.db_path) as db:
+            if global_data: await db.execute("INSERT OR REPLACE INTO cg_global VALUES (?,?,?,?,?)", global_data)
+            if category_rows: await db.executemany("INSERT OR REPLACE INTO cg_categories VALUES (?,?,?,?,?)", category_rows)
+            if bias_rows: await db.executemany("INSERT OR REPLACE INTO cg_exchange_bias VALUES (?,?,?,?)", bias_rows)
+            await db.commit()
+
+    # ETF kaydetme metodu
+    async def save_etf_data(self, etf_rows):
+        async with aiosqlite.connect(self.db_path) as db:
+            if etf_rows: 
+                await db.executemany("INSERT OR REPLACE INTO etf_flows VALUES (?,?,?,?)", etf_rows)
+            await db.commit() # Bir tık dışarı (if hizasına) alındı
 
 
-# → TEK session açar
-"""async def fetch_all_data():
-    # Listeleri burada birleştirin (set kullanımı mükerrer kaydı önler)
-    symbols = list(set(INDEX_BASKET + WATCHLIST + ["BTCUSDT"]))
-    ts = int(time.time())
-    final_rows = []
 
-    async with aiohttp.ClientSession() as session:
-        # 1. BINANCE TOPLU FİYAT ÇEKME (Tek İstek!)
+    async def cleanup(self): # 7 günden eski veriler temizlenir
+        limit_ts = int(time.time()) - (DATA_RETENTION_DAYS * 86400)
+        async with aiosqlite.connect(self.db_path) as db:
+            for table in ["bi_market", "cz_derivatives", "cg_global", "cg_categories", "cg_exchange_bias", "etf_flows"]:
+                await db.execute(f"DELETE FROM {table} WHERE ts < ?", (limit_ts,))
+            await db.commit()
+
+class MarketCollector:
+    """Binance ve Coinalyze verilerini asenkron toplar."""
+    def __init__(self, session):
+        self.session = session
+        self.symbols = list(set(INDEX_BASKET + WATCHLIST + ["BTCUSDT"]))
+
+    async def fetch_binance(self, ts):
         try:
-            # Sembol bazlı değil, genel ticker listesini çekiyoruz
-            async with session.get("https://api.binance.com/api/v3/ticker/price", timeout=10) as r:
+            async with self.session.get("https://api.binance.com/api/v3/ticker/24hr") as r:
                 if r.status == 200:
-                    all_tickers = await r.json()
-                    # Bizim listemizde olanları sözlüğe çevir (Hızlı erişim için)
-                    price_dict = {t['symbol']: float(t['price']) for t in all_tickers if t['symbol'] in symbols}
-                    
-                    for s in symbols:
-                        if s in price_dict:
-                            final_rows.append({
-                                "ts": ts, "symbol": s, "source": "binance",
-                                "price": price_dict[s], "category": "basket"
-                            })
+                    tickers = {t['symbol']: t for t in await r.json() if t['symbol'] in self.symbols}
+                    return [(ts, s, float(tickers[s]['lastPrice']), float(tickers[s]['quoteVolume']), 'basket') 
+                            for s in self.symbols if s in tickers]
         except Exception as e:
-            print(f"⚠️ Binance Toplu Fiyat Hatası: {e}")
+            logger.error(f"❌⚠️ Binance Hatası: {e}")
+        return []
 
-        # 2. COINALYZE (Aynı session, gruplandırılmış istek)
-        coinalyze_rows = await fetch_coinalyze_data(session, symbols)
-        final_rows.extend(coinalyze_rows)
+    async def fetch_coinalyze(self, ts):
+        headers = {"api_key": COINALYZE_API_KEY}
+        # 1. Fail-fast: Önce BTC'yi kontrol et (Hata alırsa Exception fırlatır)
+        btc_res = await self._get_cz_chunk(["BTCUSDT"], headers, ts)
+        if not btc_res:
+            raise BTCDataUnavailable("BTC verisi alınamadı!")
 
-    return final_rows
-"""
+        results = btc_res
+        others = [s for s in self.symbols if s != "BTCUSDT"]
+        
+        # 2. Chunk bazlı seri işlem (Senin istediğin -1- nolu geliştirme)
+        # Chunk size: 2, Delay: 1.2s (Rate limit dostu)
+        for i in range(0, len(others), 2):
+            chunk = others[i:i+2]
+            # logger.info(f"⏳ Veri çekiliyor: {chunk}")
+            res = await self._get_cz_chunk(chunk, headers, ts)
+            results.extend(res)
+            await asyncio.sleep(1.2) 
+        return results
 
-# market_collector.py içindeki fetch_all_data güncellenmiş hali
-# price + 24 saatlik kümülatif hacim
-async def fetch_all_data():
-    symbols = list(set(INDEX_BASKET + WATCHLIST + ["BTCUSDT"]))
-    ts = int(time.time())
-    final_rows = []
+    async def _get_cz_chunk(self, chunk, headers, ts):
+        """Geliştirilmiş chunk çekici: Hata durumunda 1 kez tekrar dener."""
+        c_syms = ",".join(f"{s}_PERP.A" for s in chunk)
+        url_oi = f"https://api.coinalyze.net/v1/open-interest?symbols={c_syms}"
+        url_fr = f"https://api.coinalyze.net/v1/funding-rate?symbols={c_syms}"
+        
+        for attempt in range(2): # Basit retry mekanizması
+            try:
+                async with self.session.get(url_oi, headers=headers) as r1, \
+                           self.session.get(url_fr, headers=headers) as r2:
+                    
+                    if r1.status == 200 and r2.status == 200:
+                        oi_raw, fr_raw = await r1.json(), await r2.json()
+                        oi_map = {x['symbol']: x['value'] for x in oi_raw}
+                        fr_map = {x['symbol']: x['value'] for x in fr_raw}
+                        return [(ts, s, oi_map.get(f"{s}_PERP.A"), fr_map.get(f"{s}_PERP.A"), 'basket') for s in chunk]
+                    
+                    if r1.status == 429 or r2.status == 429:
+                        await asyncio.sleep(2 * (attempt + 1)) # Rate limit varsa bekle
+            except Exception as e:
+                logger.warning(f"⏳⚠️ Coinalyze bağlantı hatası ({chunk}): {e}")
+                await asyncio.sleep(1)
+        return []
+        
+class CoingeckoCollector:
+    """Coingecko'dan temiz ve filtrelenmiş verileri toplar."""
+    def __init__(self, session):
+        self.session = session
+        self.base_url = "https://api.coingecko.com/api/v3"
 
-    async with aiohttp.ClientSession() as session:
-        # 1. BINANCE TOPLU FİYAT VE HACİM ÇEKME
+    async def fetch_all(self, category_limit=20): # Parametre eklendi
+        ts = int(time.time())
+        g_data = await self._fetch_global(ts)
+        c_rows = await self._fetch_categories(ts, limit=category_limit) # Limiti ilet
+        # Sadece BTC'yi değil, önemli gördüğün diğer coinlerin bias'ını da buraya ekleyebilirsin
+        b_rows = await self._fetch_bias("bitcoin", ts) 
+        return g_data, c_rows, b_rows
+
+
+    async def _fetch_global(self, ts):
         try:
-            # ticker/24hr hem fiyat (lastPrice) hem hacim (quoteVolume) verir
-            async with session.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10) as r:
+            async with self.session.get(f"{self.base_url}/global") as r:
                 if r.status == 200:
-                    all_tickers = await r.json()
-                    # Sözlük yapısı: { "BTCUSDT": {"price": 50000, "vol": 1000000}, ... }
-                    ticker_dict = {
-                        t['symbol']: {
-                            "price": float(t['lastPrice']), 
-                            "volume": float(t['quoteVolume']) # USDT bazlı hacim
-                        } 
-                        for t in all_tickers if t['symbol'] in symbols
-                    }
-                    
-                    for s in symbols:
-                        if s in ticker_dict:
-                            final_rows.append({
-                                "ts": ts, "symbol": s, "source": "binance",
-                                "price": ticker_dict[s]["price"],
-                                "volume": ticker_dict[s]["volume"], # ⬅️ DB'ye gidecek
-                                "category": "basket"
-                            })
+                    d = (await r.json())["data"]
+                    return (ts, d["total_market_cap"]["usd"], d["total_volume"]["usd"], d["market_cap_percentage"]["btc"], d["market_cap_percentage"]["eth"])
         except Exception as e:
-            print(f"⚠️ Binance Veri Hatası: {e}")
-
-        # 2. COINALYZE (OI ve Funding çekmeye devam eder)
-        coinalyze_rows = await fetch_coinalyze_data(session, symbols)
-        final_rows.extend(coinalyze_rows)
-
-    return final_rows
+            logger.warning(f"⏳⚠️ CG Global Hatası: {e}")
+        return None
 
 
-# market_collector.py içindeki collect_once metodu
-async def collect_once():
-    await init_db()
-    rows = await fetch_all_data()
+    async def _fetch_categories(self, ts, limit=20): # Varsayılan N=20
+        try:
+            async with self.session.get(f"{self.base_url}/coins/categories") as r:
+                if r.status == 200:
+                    data = await r.json()
+                    
+                    # Piyasa değerine göre ilk N kategoriyi al (Dinamik Ayar)
+                    top_data = data[:limit] 
+                    logger.info(f"📊 Coingecko'dan en büyük {len(top_data)} kategori işleniyor.")
+                    
+                    results = []
+                    for c in top_data:
+                        cat_id = c.get("id")
+                        if cat_id:
+                            results.append((
+                                ts, 
+                                cat_id, 
+                                c.get("market_cap") or 0.0,
+                                c.get("volume_24h") or 0.0, 
+                                c.get("market_cap_change_24h") or 0.0
+                            ))
+                    return results
 
-    # volume eklendi
-    sql = """INSERT OR REPLACE INTO snapshot 
-             (ts, symbol, source, category, price, open_interest, funding_rate, volume) 
-             VALUES (?,?,?,?,?,?,?,?)"""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.executemany(sql, [
-            (r["ts"], r["symbol"], r["source"], r["category"],
-             r.get("price"), r.get("open_interest"), r.get("funding_rate"), 
-             r.get("volume")) # ⬅️ eklendi
-            for r in rows
-        ])
-        await db.commit()
+                elif r.status == 429:
+                    logger.warning("⚠️ Coingecko Rate Limit (429) hatası. İstek reddedildi.")
+                else:
+                    logger.warning(f"⚠️ Coingecko Hatası: Status {r.status}")
+                    
+        except Exception as e:
+            logger.warning(f"⏳⚠️ CG Kategori Hatası: {e}")
+        return []
+        
 
-    await cleanup_db()
-    return len(rows)
+    async def _fetch_bias(self, coin_id, ts):
+        """Hatalı pariteleri (BTC/SATS vb.) eler, sadece gerçek USD/USDT fiyatlarını alır."""
+        try:
+            async with self.session.get(f"{self.base_url}/coins/{coin_id}/tickers") as r:
+                if r.status == 200:
+                    data = await r.json()
+                    tickers = data.get("tickers", [])
+                    
+                    bias_rows = []
+                    for t in tickers:
+                        exchange_name = t["market"]["name"]
+                        # FİLTRE: Sadece izin verilen borsalar ve hedef birimi USD veya USDT olanlar
+                        if exchange_name in ALLOWED_EXCHANGES:
+                            # target: fiyatın hangi birimde olduğunu belirtir (örn: USD)
+                            if t.get("target") in ["USD", "USDT"]:
+                                price = t.get("last")
+                                if price:
+                                    bias_rows.append((ts, coin_id, exchange_name, float(price)))
+                    return bias_rows
+        except Exception as e:
+            logger.warning(f"⏳⚠️ CG Bias Hatası: {e}")
+        return []
+
+class ETFDataService:
+    """
+    Farside üzerinden ETF verilerini çeker ve market_collector veritabanı 
+    formatına uygun (timestamp içerikli) hale getirir.
+    """
+    def __init__(self):
+        self.base_urls = {
+            "BTC": "https://farside.co.uk/btc/",
+            "ETH": "https://farside.co.uk/eth/",
+            "SOL": "https://farside.co.uk/sol/"
+        }
+
+    def _is_valid_date(self, text: str) -> bool:
+        """Metnin tarih formatında olup olmadığını kontrol eder."""
+        pattern = r'\d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}'
+        return bool(re.search(pattern, text))
+
+    def _clean_numeric(self, value: str) -> float:
+        """Parantezli ve virgüllü finansal metinleri float'a çevirir."""
+        if not value or value in ["-", "0.0", ""]:
+            return 0.0
+        cleaned = value.replace("(", "-").replace(")", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+
+    async def fetch_all_etf_data(self) -> List[tuple]:
+        """
+        Tüm varlıklar için ETF verilerini çeker ve DB'ye uygun tuple listesi döner.
+        Format: (ts, asset, date_str, total_flow)
+        """
+        results = []
+        ts = int(time.time())
+        
+        async with AsyncSession(impersonate="chrome110") as s:
+            for asset, url in self.base_urls.items():
+                try:
+                    response = await s.get(url, timeout=30)
+                    if response.status_code != 200:
+                        logger.warning(f"⚠️ ETF Hatası ({asset}): HTTP {response.status_code}")
+                        continue
+                    
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    table = soup.find("table", class_="etf")
+                    if not table:
+                        continue
+                        
+                    rows = table.find("tbody").find_all("tr")
+                    
+                    # En güncel (en alttaki) geçerli veriyi bul
+                    for row in reversed(rows):
+                        cells = row.find_all("td")
+                        if not cells: continue
+                        
+                        date_str = cells[0].get_text(strip=True)
+                        total_val = cells[-1].get_text(strip=True)
+                        
+                        if self._is_valid_date(date_str) and total_val not in ["-", "0.0", "0"]:
+                            flow = self._clean_numeric(total_val)
+                            results.append((ts, asset, date_str, flow))
+                            logger.info(f"✅ ETF Verisi Alındı: {asset} | {date_str} | {flow} $m")
+                            break
+                            
+                except Exception as e:
+                    logger.error(f"❌ ETF Servis Hatası ({asset}): {e}")
+        
+        return results
 
 
+# --- BILDIRIM BÖLÜMÜ ---
+# Momentum sinyallerini yeni tablo yapısıyla (JOIN) en hızlı şekilde çeker
 class MarketAnalyzer:
     def __init__(self, db_path):
         self.db_path = db_path
@@ -267,127 +317,148 @@ class MarketAnalyzer:
     async def get_momentum_signals(self, min_oi_change=3.0):
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            # En son 2 zaman damgasını al
-            cursor = await db.execute("SELECT DISTINCT ts FROM snapshot ORDER BY ts DESC LIMIT 2")
+            # En son 2 başarılı veri toplama zamanını al
+            cursor = await db.execute("SELECT DISTINCT ts FROM cz_derivatives ORDER BY ts DESC LIMIT 2")
             times = await cursor.fetchall()
-            
             if len(times) < 2: return []
+            
             latest_ts, prev_ts = times[0]['ts'], times[1]['ts']
 
+            # GELİŞTİRİLMİŞ SORGU: Hem fiyat hem OI değişimini tek seferde hesaplar
             query = """
             SELECT 
-                c_oi.symbol,
-                b_pr.price,  -- Binance'ten gelen saf fiyat
-                ((b_pr.price / b_prev.price) - 1) * 100 as p_change, -- Saf fiyat değişimi
-                c_oi.open_interest as oi,
-                ((c_oi.open_interest / c_prev.open_interest) - 1) * 100 as oi_change, -- Saf OI değişimi
-                c_oi.funding_rate as fr
-            FROM snapshot c_oi
-            -- 1. Güvenlik: Anlık fiyatı Binance'ten al
-            JOIN snapshot b_pr ON c_oi.symbol = b_pr.symbol 
-                AND b_pr.ts = c_oi.ts AND b_pr.source = 'binance'
-            -- 2. Güvenlik: Önceki OI verisini Coinalyze'dan al (Saf kıyas)
-            JOIN snapshot c_prev ON c_oi.symbol = c_prev.symbol 
-                AND c_prev.ts = ? AND c_prev.source = 'coinalyze'
-            -- 3. Güvenlik: Önceki fiyatı Binance'ten al
-            JOIN snapshot b_prev ON c_oi.symbol = b_prev.symbol 
-                AND b_prev.ts = ? AND b_prev.source = 'binance'
-            
-            WHERE c_oi.ts = ? 
-              AND c_oi.source = 'coinalyze'
-              -- SAF GERÇEKLİK FİLTRELERİ:
-              AND c_oi.open_interest IS NOT NULL    -- Anlık OI yoksa hesaplama
-              AND c_prev.open_interest IS NOT NULL  -- Önceki OI yoksa hesaplama
-              AND b_pr.price IS NOT NULL            -- Anlık fiyat yoksa hesaplama
-              AND b_prev.price IS NOT NULL          -- Önceki fiyat yoksa hesaplama
-              AND c_prev.open_interest > 0          -- Sıfıra bölünme hatasını engelle
-              AND oi_change >= ?                    -- Sadece eşiği geçen gerçek veriler
+                curr.symbol,
+                bi.price,
+                ((bi.price / bi_prev.price) - 1) * 100 as p_change,
+                curr.open_interest as oi,
+                ((curr.open_interest / prev.open_interest) - 1) * 100 as oi_change,
+                curr.funding_rate as fr
+            FROM cz_derivatives curr
+            JOIN cz_derivatives prev ON curr.symbol = prev.symbol AND prev.ts = ?
+            JOIN bi_market bi ON curr.symbol = bi.symbol AND bi.ts = curr.ts
+            JOIN bi_market bi_prev ON curr.symbol = bi_prev.symbol AND bi_prev.ts = ?
+            WHERE curr.ts = ? 
+              AND curr.open_interest > 0 
+              AND prev.open_interest > 0
+              AND bi_prev.price > 0
+              AND oi_change >= ?
             ORDER BY oi_change DESC
             """
             cursor = await db.execute(query, (prev_ts, prev_ts, latest_ts, min_oi_change))
             return await cursor.fetchall()
+
+    async def get_latest_etf_summary(self):
+        """En son kaydedilen ETF verilerini asset bazlı özetler."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Her asset için en son ts'ye sahip kaydı getir
+            query = """
+            SELECT asset, date_str, total_flow 
+            FROM etf_flows 
+            WHERE ts = (SELECT MAX(ts) FROM etf_flows)
+            """
+            cursor = await db.execute(query)
+            rows = await cursor.fetchall()
             
-
-
-
-
+            summary = []
+            for r in rows:
+                emoji = "🟢" if r['total_flow'] > 0 else "🔴"
+                summary.append(f"{r['asset']}: {emoji} {r['total_flow']}M$ ({r['date_str']})")
+            
+            return " | ".join(summary) if summary else "ETF Verisi Henüz Yok"
+            
+            
 async def check_and_notify(notifier, analyzer):
-    """
-    Hafızalı (cooldown destekli) bildirim kontrolü.
-    """
-    # 1. Bildirim eşiğine takılan TÜM sinyalleri çek (%8.0+)
-    all_signals = await analyzer.get_momentum_signals(min_oi_change=8.0)
+    """Spam engelleme (cooldown) mekanizmalı bildirim sistemi."""
+    # %8 ve üzeri OI artışlarını alarm olarak kabul et
+    threshold = 8.0
+    all_signals = await analyzer.get_momentum_signals(min_oi_change=threshold)
     
     if not all_signals:
         return
 
-    # 2. SPAM FİLTRESİ: Sadece süresi dolan (1 saat) coinleri ayıkla
     valid_signals = []
     now = time.time()
     
     for s in all_signals:
         symbol = s['symbol'].replace('USDT', '')
+        # Cooldown kontrolü (Eski kodundaki notifier.last_sent ve cooldown'u kullanır)
         last_time = notifier.last_sent.get(symbol, 0)
         
-        # Eğer cooldown süresi dolmuşsa listeye ekle
         if now - last_time >= notifier.cooldown:
             valid_signals.append(s)
-            # Zaman damgasını burada güncelle (Filtreden geçtiği an)
             notifier.last_sent[symbol] = now
 
-    # 3. Eğer filtreden geçen 'yeni' coin varsa raporu gönder
     if valid_signals:
         result = {
             "type": "OI_REPORT",
             "signals": valid_signals,
-            "min_oi_change": 8.0,
+            "min_oi_change": threshold,
             "is_auto_alert": True 
         }
         
-        # Senin profesyonel formatlayıcın üzerinden mesajı oluşturuyoruz
+        # market_report.py'deki profesyonel tabloyu kullanır
         formatted_msg = format_table_response(result)
         final_msg = f"🔔 <b>MOMENTUM ALARMI</b>\n{formatted_msg}"
         
-        # Telegram'a gönder
         await notifier.send_notification(final_msg)
-        print(f"📢 Bildirim gönderildi: {', '.join([s['symbol'] for s in valid_signals])}")
+        logger.info(f"📥📢 {len(valid_signals)} coin için alarm gönderildi.")
 
-if __name__ == "__main__":
-    async def runner():
-        print(f"🚀 Market Collector + Alarm Sistemi başlatıldı.")
-        print(f"📊 Periyot: {COLLECT_INTERVAL/60} dk | Bildirim Eşiği: %8.0 OI")
-        
-        # ÖNEMLİ: Nesneleri döngü dışında oluşturuyoruz ki hafıza (cooldown) korunsun
-        notifier = TelegramNotifier() 
-        analyzer = MarketAnalyzer(DB_PATH) 
-        
-        while True:
+
+# ---  python -m analysis.market_collector
+async def main_loop():
+    db_manager = DataManager(DB_PATH)
+    await db_manager.init_db()
+    notifier = TelegramNotifier()
+    analyzer = MarketAnalyzer(DB_PATH)
+    etf_service = ETFDataService() # Servisi başlat
+    cycle = 0
+
+    while True:
+        async with aiohttp.ClientSession() as session:
             try:
-                # 1. Veri Topla ve Kaydet
-                n = await collect_once()
-                print(f"{time.strftime('%H:%M:%S')} - ✅ {n} satır veritabanına yazıldı")
+                ts = int(time.time())
+                mc = MarketCollector(session)
+                cc = CoingeckoCollector(session)
 
-                # 2. Konsol Loglama (Daha düşük eşik: %3.0+)
-                console_signals = await analyzer.get_momentum_signals(min_oi_change=3.0)
-                if console_signals:
-                    print(f"\n🔥 MOMENTUM SİNYALLERİ (%3+ OI) 🔥")
-                    for s in console_signals:
-                        p_str = f"{s['p_change']:+.2f}%"
-                        oi_str = f"{s['oi_change']:+.2f}%"
-                        print(f"SYMBOL: {s['symbol']:<10} | OI: {oi_str:<8} | PRICE: {p_str:<8}")
-                    print("-" * 55)
+                # 1. Market Verileri (Binance & Coinalyze)
+                bi_data = await mc.fetch_binance(ts)
+                cz_data = await mc.fetch_coinalyze(ts)
+                await db_manager.save_market_data(bi_data, cz_data)
 
-                # 3. Otomatik Bildirim Kontrolü (%8.0+ ve Cooldown)
-                await check_and_notify(notifier, analyzer)
+                # 2. Analiz ve Bildirim
+                if len(cz_data) > 0:
+                    await check_and_notify(notifier, analyzer)
 
+                # 3. Coingecko (Periyodik)
+                if cycle % CG_CYCLE_LIMIT == 0:
+                    # CG_CATEGORY_LIMIT (20) değerini fetch_all içine gönderiyoruz
+                    g, c, b = await cc.fetch_all(category_limit=CG_CATEGORY_LIMIT) 
+                    await db_manager.save_cg_snapshot(g, c, b)
+                    logger.info(f"✅ Coingecko Snapshot kaydedildi (Top {CG_CATEGORY_LIMIT} Kategori)")
+                    
+                                                          
+                # 4. ETF VERİLERİ (Her 3 Saatte Bir - 18 * 10dk)
+                if cycle % 18 == 0: 
+                    logger.info("📊 ETF verileri güncelleniyor...")
+                    etf_rows = await etf_service.fetch_all_etf_data()
+                    if etf_rows:
+                        await db_manager.save_etf_data(etf_rows)
+
+                logger.info(f"📥 {datetime.now().strftime('%H:%M')} - Cycle {cycle} tamam.")
+                await db_manager.cleanup()
+                cycle += 1
+                await asyncio.sleep(COLLECT_INTERVAL)
+
+            except BTCDataUnavailable as e:
+                logger.info(f"⏳ BTC Bekleniyor: {e}")
+                await asyncio.sleep(60)
             except Exception as e:
-                print(f"{time.strftime('%H:%M:%S')} - ❌ Hata Oluştu: {e}")
-            
-            # 4. Bekle
-            await asyncio.sleep(COLLECT_INTERVAL)
+                logger.error(f"❌❌ Hata: {e}")
+                await asyncio.sleep(10)
+                        
+if __name__ == "__main__":
+    asyncio.run(main_loop())
 
-    try:
-        asyncio.run(runner())
-    except KeyboardInterrupt:
-        print("\n🛑 Collector durduruldu.")
-        
+
+    

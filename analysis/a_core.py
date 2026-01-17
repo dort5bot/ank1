@@ -1,5 +1,14 @@
 # a_core.py
 # python -m analysis.a_core
+"""
+alt_vs_btc_short   → akış
+alt_short_term     → momentum
+coin_long_term     → yapı
+
+❌ fallback yok
+❌ BTC yoksa analiz yok
+❌ uydurma veri yok
+"""
 
 from __future__ import annotations
 import asyncio
@@ -25,9 +34,14 @@ logger = logging.getLogger("analysis.core")
 logging.basicConfig(level=logging.INFO)
 
 INDEX_BASKET = [
-    "ETHUSDT", "SOLUSDT", "BNBUSDT", "PEPEUSDT", "WIFUSDT", "DOGEUSDT",
-    "FETUSDT", "NEARUSDT", "TAOUSDT", "SUIUSDT", "APTUSDT", "OPUSDT",
-    "ARBUSDT", "LINKUSDT", "AVAXUSDT", "ONDOUSDT", "PENDLEUSDT", "XRPUSDT"
+    # 4=MAJOR Piyasa nereye gidiyor: Altlar ETH’ye göre güçleniyor mu zayıflıyor mu
+    "ETHUSDT","BNBUSDT","XRPUSDT","TRXUSDT",
+    # 7=INFRA L1 / L2 Altyapı Risk iştahı: Boğada ilk koşanlar
+    "SOLUSDT","AVAXUSDT","SUIUSDT","APTUSDT","NEARUSDT","OPUSDT","ARBUSDT",
+    # 3=DeFi / Yield / Smart Money Akıllı para nerede
+    "LINKUSDT","ONDOUSDT","PENDLEUSDT",
+    # 3=MEME
+    "DOGEUSDT","1000PEPEUSDT","WIFUSDT"
 ]
 
 WATCHLIST = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "PEPEUSDT", "FETUSDT", "SUSDT", "ARPAUSDT"]
@@ -407,17 +421,6 @@ class CoreAnalysisEngine:
         )
 
     # Kaynakları düzgün kapat.
-    """async def close(self):
-        if self.fetcher:
-            await self.fetcher.close()
-
-        self.cpu_executor.shutdown(wait=False)
-        self.io_executor.shutdown(wait=False)
-        
-        self.cpu_executor.shutdown(wait=False, cancel_futures=True)
-        self.io_executor.shutdown(wait=False, cancel_futures=True)
-    """
-
     async def close(self):
         """Graceful shutdown for CoreAnalysisEngine"""
         # Fetcher
@@ -500,29 +503,6 @@ class CoreAnalysisEngine:
 
         return pd.DataFrame(prepared) if prepared else df
 
-    # =========================================================
-    # 3️⃣ MARKET CONTEXT (AP)
-    # =========================================================
-    async def get_alt_power(self, basket: List[str] = INDEX_BASKET):
-        """Alt Power (AP) hesapla."""
-        from analysis.db_loader import load_latest_snapshots
-
-        symbols = list(set(basket + ["BTCUSDT"]))
-        loop = asyncio.get_running_loop()
-
-        df = await loop.run_in_executor(
-            None, load_latest_snapshots, symbols, 50
-        )
-
-        if df.empty:
-            return {
-                "alt_vs_btc_short": 50.0,
-                "alt_short_term": 50.0,
-                "coin_long_term": 50.0,
-                "error": "Veri yok"
-            }
-
-        return self.market_engine.calculate_alt_power(df, basket)
 
     # =========================================================
     # 4️⃣ ANA PUBLIC API
@@ -637,6 +617,89 @@ class CoreAnalysisEngine:
         except Exception as e:
             return {"symbol": symbol, "status": "failed", "error": str(e)}
 
+    # =========================================================
+    # 3️⃣ MARKET CONTEXT (AP)
+    # =========================================================
+    """async def get_alt_power(self, basket: List[str] = INDEX_BASKET):
+        from analysis.db_loader import load_latest_market
+
+        symbols = list(set(basket + ["BTCUSDT"]))
+        loop = asyncio.get_running_loop()
+
+        # db_loader artık {"micro": df, "macro": df, "categories": df} döndürüyor
+        data_bundle = await loop.run_in_executor(
+            None, load_latest_market, symbols, 50
+        )
+
+        # Veri kontrolü (micro tablosu boşsa işlem yapma)
+        if data_bundle["micro"].empty:
+            return {
+                "alt_vs_btc_short": 50.0,
+                "alt_short_term": 50.0,
+                "coin_long_term": 50.0,
+                "error": "Veri bulunamadı"
+            }
+
+        # Market engine'e tüm bundle'ı gönderiyoruz
+        return self.market_engine.calculate_alt_power(data_bundle, basket)
+     """   
+
+    # a_core.py - get_alt_power metodunu güncelle
+    async def get_alt_power(self, basket: List[str] = INDEX_BASKET):
+        """Alt Power (AP) hesapla - ETF ve kategori bilgisi ile genişletilmiş"""
+        from analysis.db_loader import load_latest_market
+        
+        symbols = list(set(basket + ["BTCUSDT"]))
+        loop = asyncio.get_running_loop()
+        
+        # db_loader'dan tüm verileri al
+        data_bundle = await loop.run_in_executor(
+            None, load_latest_market, symbols, 50
+        )
+        
+        # 1. Temel Alt Power hesapla
+        ap_result = self.market_engine.calculate_alt_power(data_bundle, basket)
+        
+        # 2. ETF verilerini ekle
+        etf_summary = {}
+        df_etf = data_bundle.get("etf", pd.DataFrame())
+        if not df_etf.empty:
+            latest_ts = df_etf["ts"].max()
+            latest_etf = df_etf[df_etf["ts"] == latest_ts]
+            for _, row in latest_etf.iterrows():
+                etf_summary[row["asset"]] = {
+                    "flow": row["total_flow"],
+                    "date": row["date_str"]
+                }
+        
+        # 3. Kategori verilerini ekle (en iyi 5)
+        category_summary = []
+        df_cats = data_bundle.get("categories", pd.DataFrame())
+        if not df_cats.empty:
+            # Market cap'e göre sırala
+            df_cats_sorted = df_cats.sort_values("market_cap", ascending=False)
+            for _, row in df_cats_sorted.head(5).iterrows():
+                category_summary.append({
+                    "name": row["category_id"],
+                    "mcap": row["market_cap"],
+                    "change": row["change_24h"]
+                })
+        
+        # 4. Birleştirilmiş sonuç
+        return {
+            **ap_result,  # Orijinal alt power sonuçları
+            "etf_summary": etf_summary,
+            "top_categories": category_summary,
+            "market_context": {
+                "btc_dominance": data_bundle.get("macro", {}).get("btc_dom", [float('nan')])[0] 
+                if not data_bundle.get("macro", pd.DataFrame()).empty else float('nan'),
+                "total_mcap": data_bundle.get("macro", {}).get("total_mcap", [float('nan')])[0]
+                if not data_bundle.get("macro", pd.DataFrame()).empty else float('nan')
+            }
+        }
+        
+
+
 
 
 # ------------------------------------------------------------
@@ -660,102 +723,197 @@ class CoreAnalysisEngine:
     "göreceli" güç ölçer. Yani bir veriyi sadece rakam olarak değil, "son 24 saatin normaline göre ne kadar saptığına" bakarak puanlar.
     - Ters Funding Skalası: Funding yükseldikçe (longlar maliyetlendikçe) yapısal riski artırıp skoru hafifçe aşağı çektik (daha gerçekçi bir piyasa baskısı okuması).
     
+    
+    ✔ fallback yok
+    ✔ sahte veri yok
+    ✔ veri yoksa NaN gösterilebilir
+
     """
 
 # 6. 'ap' işlemlerini (Alt Power) yöneten motor.
+class BarContextBuilder:
+    """DB'den gelen veriyi analiz motoru için stabilize eder. eksik satırları ve zaman kaymalarını temizler"""
+
+    def __init__(self, df_raw: pd.DataFrame, index_symbols: List[str]):
+        self.df_raw = df_raw.copy()
+        self.index_symbols = index_symbols
+
+    def select_reference_ts(self) -> pd.DataFrame:
+        """En yüksek symbol coverage'a sahip en son bar'ı seçer."""
+        if self.df_raw.empty: return pd.DataFrame()
+        
+        ts_coverage = self.df_raw.groupby("ts")["symbol"].nunique().sort_index()
+        if ts_coverage.empty: return pd.DataFrame()
+
+        ref_ts = ts_coverage.index[-1]
+        # Sadece bu zaman dilimine kadar olan veriyi al
+        return self.df_raw[self.df_raw["ts"] <= ref_ts]
+
+    def build_pivots(self):
+        """Price, volume, OI pivotlarını üretir (Yeni DB şeması sütun isimleriyle)."""
+        df = (
+            self.df_raw
+            .groupby(["ts", "symbol"])
+            .agg(
+                price=("price", "last"),
+                volume=("volume", "sum"),
+                open_interest=("open_interest", "last"),
+                funding_rate=("funding_rate", "last"),
+            )
+            .reset_index()
+            .sort_values("ts")
+        )
+
+        prices = df.pivot(index="ts", columns="symbol", values="price")
+        volumes = df.pivot(index="ts", columns="symbol", values="volume").fillna(0)
+        oi = df.pivot(index="ts", columns="symbol", values="open_interest")
+        funding = df.pivot(index="ts", columns="symbol", values="funding_rate")
+
+        return prices, volumes, oi, funding
+        
+     
 class MarketContextEngine:
-    
+    """Alt Power (AP) – Fallback'siz, NaN-disiplinli sürüm"""
+
     @staticmethod
     def scale_0_100(value: float, min_val: float, max_val: float) -> float:
-        """Dinamik veya sabit aralıklarla normalizasyon yapar."""
-        if min_val == max_val: return 50.0
-        # Değerlerin yönünü koruyarak (ters skala gerekirse min > max olabilir)
+        if pd.isna(value) or pd.isna(min_val) or pd.isna(max_val):
+            return float("nan")
+        if min_val == max_val:
+            return float("nan")
+
         norm = (value - min_val) / (max_val - min_val)
         return float(np.clip(norm * 100, 0, 100))
 
-    def calculate_alt_power(self, df_raw: pd.DataFrame, INDEX_REPORT: List[str]) -> Dict[str, float]:
-        """
-        Gelişmiş AP Hesaplama: 
-        1. Hacim Ağırlıklı (VWAP Mantığı)
-        2. Volatiliteye Duyarlı (ATR Bazlı Ölçekleme)
-        3. Çoklu Zaman Dilimi Ağırlıklandırması
-        """
-        if df_raw.empty:
-            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0}
 
-        # --- 1. VERİ TEMİZLEME & HAZIRLIK ---
-        df = df_raw.copy()
-        df_clean = df.groupby(['ts', 'symbol']).agg({
-            'price': 'last',
-            'open_interest': 'last',
-            'funding_rate': 'last',
-            'volume': 'sum'
-        }).reset_index().sort_values('ts')
+    def calculate_alt_power(self, data_bundle: Dict, basket: List[str]) -> Dict[str, float]:
+        df_micro = data_bundle.get("micro")
+        df_macro = data_bundle.get("macro")
 
-        # Pivot Tablolar
-        prices = df_clean.pivot(index="ts", columns="symbol", values="price").ffill()
-        volumes = df_clean.pivot(index="ts", columns="symbol", values="volume").ffill()
-        
-        available_alts = [s for s in INDEX_REPORT if s in prices.columns]
-        if not available_alts or len(prices) < 12: # En az 1 saatlik veri (5dk bar ile)
-            return {"alt_vs_btc_short": 50.0, "alt_short_term": 50.0, "coin_long_term": 50.0}
+        if df_micro is None or df_micro.empty:
+            logger.info("No micro data available")
+            return self._nan_result("NO_MICRO_DATA")
 
-        # --- 2. PİYASA OYNAKLIĞI (ATR) HESABI ---
-        # Son 24 barın (2 saat) standart sapmasını volatilite göstergesi olarak kullanalım
-        # Bu, skorumuzun 'yapışmasını' engelleyen dinamik filtredir.
-        market_volatility = prices[available_alts].pct_change().std().mean() 
-        # Eğer piyasa çok ölüyse minimum bir eşik belirleyelim (Örn: %0.1)
-        dynamic_threshold = max(market_volatility, 0.001)
+        # DEBUG
+        logger.info(f"Micro Rows: {len(df_micro)}")
 
-        # --- 3. ALT vs BTC (Hacim Ağırlıklı) ---
-        btc_ret = prices["BTCUSDT"].pct_change(1).iloc[-1] if "BTCUSDT" in prices.columns else 0
-        alt_rets = prices[available_alts].pct_change(1).iloc[-1]
-        alt_vols = volumes[available_alts].iloc[-1]
-        
-        # Büyük altcoinlerin etkisi daha yüksek
-        weighted_alt_ret = (alt_rets * alt_vols).sum() / (alt_vols.sum() + 1e-9)
-        
-        # Dinamik ölçek: Volatilitenin 0.5 katı fark normal karşılanır
-        v_btc = self.scale_0_100(weighted_alt_ret - btc_ret, -dynamic_threshold * 0.5, dynamic_threshold * 0.5)
+        # --------------------------------------------------
+        # 1. Stabilizasyon
+        # --------------------------------------------------
+        builder = BarContextBuilder(df_micro, basket)
+        stable_df = builder.select_reference_ts()
 
-        # --- 4. ALT MOMENTUM (Zaman Ağırlıklı) ---
-        # Kısa (5dk), Orta (1sa), Uzun (4sa) değişimlerin ortalaması
-        ret_5m = prices[available_alts].pct_change(1).iloc[-1].mean()
-        ret_1h = prices[available_alts].pct_change(12).iloc[-1].mean() if len(prices) >= 12 else ret_5m
-        ret_4h = prices[available_alts].pct_change(48).iloc[-1].mean() if len(prices) >= 48 else ret_1h
-        
-        # Öneri: %50 kısa, %30 orta, %20 uzun
-        combined_mom = (ret_5m * 0.5) + (ret_1h * 0.3) + (ret_4h * 0.2)
-        
-        # Dinamik ölçek: Momentum eşiği volatiliteye göre esner
-        v_short = self.scale_0_100(combined_mom, -dynamic_threshold * 2, dynamic_threshold * 2)
+        if stable_df.empty:
+            logger.info("No stable bars after reference selection")
+            return self._nan_result("NO_STABLE_BAR")
 
-        # --- 5. YAPISAL GÜÇ (OI & Funding) ---
-        try:
-            oi_pivot = df_clean.pivot(index="ts", columns="symbol", values="open_interest").ffill()
-            # OI İvmesi (Son 1 saatlik değişim)
-            oi_change = (oi_pivot[available_alts].iloc[-1] / oi_pivot[available_alts].iloc[-12]) - 1
-            
-            # OI için sabit eşik daha sağlıklıdır çünkü OI fiyattan bağımsız şişebilir
-            oi_score = self.scale_0_100(oi_change.mean(), -0.05, 0.05)
-            
-            # Funding (Düşük/Negatif funding yükseliş için daha sağlıklı 'duvar' sağlar)
-            fund_avg = df_clean[df_clean['symbol'].isin(available_alts)].groupby('symbol')['funding_rate'].last().mean()
-            # 0.01 pozitif funding (pahalı), -0.01 negatif funding (ucuz)
-            fund_score = self.scale_0_100(fund_avg, 0.015, -0.005) 
-            
-            v_long = (oi_score * 0.7) + (fund_score * 0.3)
-        except:
-            v_long = 50.0
+        prices, volumes, oi, funding = builder.build_pivots()
 
-        return {
-            "alt_vs_btc_short": round(float(v_btc), 1),
-            "alt_short_term": round(float(v_short), 1),
-            "coin_long_term": round(float(v_long), 1)
+        # DEBUG
+        logger.info(f"Price Pivot Shape: {prices.shape}")  # (Zaman, Sembol)
+
+        valid_alts = [s for s in basket if s in prices.columns and s != "BTCUSDT"]
+
+        # DEBUG
+        logger.info(f"Valid Alts: {valid_alts}")
+
+        if len(valid_alts) < 3 or "BTCUSDT" not in prices.columns:
+            logger.info("Insufficient symbols for computation")
+            return self._nan_result("INSUFFICIENT_SYMBOLS")
+
+        # --------------------------------------------------
+        # 2. Dinamik volatilite (GERÇEK, yapay alt sınır yok)
+        # --------------------------------------------------
+        # fill_method=None ile FutureWarning önlenir
+        market_vol = prices[valid_alts].pct_change(periods=1, fill_method=None).std().median()
+        logger.info(f"Market volatility (median std of pct_change): {market_vol}")
+
+        if pd.isna(market_vol) or market_vol == 0:
+            dyn_range = float("nan")
+        else:
+            dyn_range = market_vol
+
+        # --------------------------------------------------
+        # 3. Alt vs BTC (Dominance filtreli)
+        # --------------------------------------------------
+        btc_ret = prices["BTCUSDT"].pct_change(periods=1, fill_method=None).iloc[-1]
+        alt_ret = prices[valid_alts].pct_change(periods=1, fill_method=None).iloc[-1].median()
+        logger.info(f"BTC return: {btc_ret}, Alt median return: {alt_ret}")
+
+        dom_bias = 1.0
+        if df_macro is not None and len(df_macro) >= 2:
+            latest_dom = df_macro["btc_dom"].iloc[0]
+            prev_dom = df_macro["btc_dom"].iloc[1]
+
+            if not pd.isna(latest_dom) and not pd.isna(prev_dom):
+                if latest_dom > prev_dom:
+                    dom_bias = 0.85
+        logger.info(f"Dominance bias: {dom_bias}")
+
+        v_btc_raw = alt_ret - btc_ret
+        v_btc = (
+            self.scale_0_100(v_btc_raw, -dyn_range, dyn_range) * dom_bias
+            if not pd.isna(dyn_range)
+            else float("nan")
+        )
+
+        # --------------------------------------------------
+        # 4. Short-term momentum
+        # --------------------------------------------------
+        mom_short = prices[valid_alts].pct_change(periods=1, fill_method=None).iloc[-1].median()
+        mom_mid = prices[valid_alts].pct_change(periods=12, fill_method=None).iloc[-1].median()
+        logger.info(f"Momentum short: {mom_short}, mid: {mom_mid}")
+
+        if pd.isna(mom_short) or pd.isna(mom_mid) or pd.isna(dyn_range):
+            v_short = float("nan")
+        else:
+            combined = (mom_short * 0.7) + (mom_mid * 0.3)
+            v_short = self.scale_0_100(combined, -dyn_range * 2, dyn_range * 2)
+
+        # --------------------------------------------------
+        # 5. Structural power (OI + Funding)
+        # --------------------------------------------------
+        oi_change = oi[valid_alts].pct_change(periods=6, fill_method=None).iloc[-1].median()
+        avg_fund = funding[valid_alts].iloc[-1].median()
+        logger.info(f"OI change: {oi_change}, Avg funding: {avg_fund}")
+
+        if pd.isna(oi_change) or pd.isna(avg_fund):
+            v_long = float("nan")
+        else:
+            oi_score = self.scale_0_100(oi_change, -0.05, 0.05)
+            fund_score = self.scale_0_100(avg_fund, 0.01, -0.01)
+
+            if pd.isna(oi_score) or pd.isna(fund_score):
+                v_long = float("nan")
+            else:
+                v_long = (oi_score * 0.6) + (fund_score * 0.4)
+
+        # --------------------------------------------------
+        # 6. Sonuç sözlüğü
+        # --------------------------------------------------
+        result = {
+            "alt_vs_btc_short": v_btc,
+            "alt_short_term": v_short,
+            "coin_long_term": v_long,
+            "macro_regime": (
+                "BTC-Focused" if dom_bias < 1.0
+                else "Risk-On" if dom_bias == 1.0
+                else "Unknown"
+            )
         }
-        
+
+        logger.info(f"Alt power calculation result: {result}")
+        return result
 
 
+    @staticmethod
+    def _nan_result(reason: str):
+        return { # değer yoksa bilinçli olarak -nan- yazılacak
+            "alt_vs_btc_short": float("nan"),
+            "alt_short_term": float("nan"),
+            "coin_long_term": float("nan"),
+            "macro_regime": reason
+        }
 
 # ------------------------------------------------------------
 # 7. Handler burayı çağıracak
@@ -871,9 +1029,6 @@ _engine = CoreAnalysisEngine()
 async def get_alt_power():
     return await _engine.get_alt_power()
 
-# async def get_top_volume_symbols(count: int = 10) -> List[str]:
-    # return await _engine.fetcher.get_top_volume_symbols(count)
-
 
 async def get_top_volume_symbols(count: int = 10):
     fetcher = BinanceDataFetcher()
@@ -907,19 +1062,19 @@ if __name__ == "__main__":
                 
                 
         """
-        print("Hacimli Coin Analizi Testi\n" + "="*50)
+        logger.info("Hacimli Coin Analizi Testi\n" + "="*50)
         
         # 1. Hacimli coinleri al
         count = 7  # İstediğin sayı
         top_symbols = await get_top_volume_symbols(count)
-        print(f"En hacimli {count} coin: {top_symbols}")
-        print()
+        logger.info(f"En hacimli {count} coin: {top_symbols}")
+        logger.info("-" * 10)
         
         # 2. Bu coinleri analiz et
         metrics = ["trend", "mom", "vol", "risk", "core"]
         # metrics = ["core"]
-        print(f"Analiz edilecek metrikler: {metrics}")
-        print()
+        logger.info(f"Analiz edilecek metrikler: {metrics}")
+        logger.info("-" * 10)
         
         # 3. Analizi çalıştır
         results = await run_full_analysis(
@@ -930,16 +1085,16 @@ if __name__ == "__main__":
         )
         
         # 4. Sonuçları tablo şeklinde göster
-        print("\n📊 ANALİZ SONUÇLARI")
-        print("-" * 80)
-        print(f"{'Sembol':<12} {'Trend':<8} {'Mom':<8} {'Vol':<8} {'Risk':<8} {'Core':<8}")
-        print("-" * 80)
+        logger.info("\n📊 ANALİZ SONUÇLARI")
+        logger.info("-" * 80)
+        logger.info(f"{'Sembol':<12} {'Trend':<8} {'Mom':<8} {'Vol':<8} {'Risk':<8} {'Core':<8}")
+        logger.info("-" * 80)
         
         for symbol in top_symbols:
             symbol_data = results.get("results", {}).get(symbol, {})
             scores = symbol_data.get("scores", {})
             
-            print(f"{symbol:<12} "
+            logger.info(f"{symbol:<12} "
                   f"{scores.get('trend', 0):<8.3f} "
                   f"{scores.get('mom', 0):<8.3f} "
                   f"{scores.get('vol', 0):<8.3f} "
@@ -947,17 +1102,17 @@ if __name__ == "__main__":
                   f"{scores.get('core', 0):<8.3f}")
         
         # 5. Market context'i göster
-        print("\n🌐 MARKET DURUMU")
-        print("-" * 80)
+        logger.info("\n🌐 MARKET DURUMU")
+        logger.info("-" * 80)
         market_context = results.get("market_context", {})
         for key, value in market_context.items():
             if isinstance(value, (int, float)):
-                print(f"{key:<25}: {value:.2f}")
+                logger.info(f"{key:<25}: {value:.2f}")
             else:
-                print(f"{key:<25}: {value}")
+                logger.info(f"{key:<25}: {value}")
         
         # 6. En yüksek core skorlu coin
-        print("\n🏆 EN İYİ PERFORMANS")
+        logger.info("\n🏆 EN İYİ PERFORMANS")
         best_symbol = None
         best_score = -1
         
@@ -969,13 +1124,13 @@ if __name__ == "__main__":
                 best_symbol = symbol
         
         if best_symbol:
-            print(f"En yüksek core skoru: {best_symbol} ({best_score:.3f})")
+            logger.info(f"En yüksek core skoru: {best_symbol} ({best_score:.3f})")
     
     async def quick_test():
         """Hızlı test - tek coin"""
-        print("Hızlı Test: BTCUSDT")
+        logger.info("Hızlı Test: BTCUSDT")
         result = await run_full_analysis("BTCUSDT", metrics=["trend", "core"])
-        print(result)
+        logger.info(result)
     
     # Testleri çalıştır
     import sys
