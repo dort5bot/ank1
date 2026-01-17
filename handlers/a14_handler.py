@@ -69,8 +69,9 @@ from typing import Dict, List, Any, Optional
 from aiogram import Router, types
 # from analysis.a_core import run_pipeline, calculate_alt_power
 # from analysis.a_core import run_full_analysis, get_alt_power, get_top_volume_symbols
-from analysis.db_loader import load_latest_snapshots
+# from analysis.db_loader import load_latest_snapshots
 from analysis.market_collector import MarketAnalyzer, DB_PATH
+
 from analysis.a_core import (
     run_full_analysis, 
     get_alt_power, 
@@ -532,7 +533,7 @@ handler = UnifiedCommandHandler()
 # ---------------------------------------------------------------
 from analysis.market_collector import MarketAnalyzer, DB_PATH
 
-async def scan_oi_command(update, context):
+async def scan_oi_command(update, context): #/toi
     analyzer = MarketAnalyzer(DB_PATH)
     signals = await analyzer.get_momentum_signals(min_oi_change=3.0)
     

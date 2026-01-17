@@ -21,7 +21,7 @@ def format_table_response(result: dict) -> str:
     # -----------------------------
     # INDEX_REPORT (Ör. /ap)
     # -----------------------------
-    if result.get("type") == "INDEX_REPORT":
+    """if result.get("type") == "INDEX_REPORT":
         d = result.get("data", {})
         if not d:
             return "❌ <b>Analiz hatası:</b> Veri bulunamadı."
@@ -34,12 +34,75 @@ def format_table_response(result: dict) -> str:
         return (
             f"📊 <b>ALT MARKET POWER</b>\n"
             f"───────────────────\n"
-            f"{get_trend_icon(d.get('alt_vs_btc_short'))} <b>Alt vs BTC (Kısa):</b> <code>{d.get('alt_vs_btc_short')}</code>\n"
-            f"{get_trend_icon(d.get('alt_short_term'))} <b>Alt Gücü (Kısa):</b> <code>{d.get('alt_short_term')}</code>\n"
-            f"{get_trend_icon(d.get('coin_long_term'))} <b>Yapısal Güç (OI):</b> <code>{d.get('coin_long_term')}</code>\n"
+            f"{get_trend_icon(d.get('alt_vs_btc_short'))} <b>Alt vs BTC (Kısa):</b> <code>{d.get('alt_vs_btc_short'):.2f}</code>\n"
+            f"{get_trend_icon(d.get('alt_short_term'))} <b>Alt Gücü (Kısa):</b> <code>{d.get('alt_short_term'):.2f}</code>\n"
+            f"{get_trend_icon(d.get('coin_long_term'))} <b>Yapısal Güç (OI):</b> <code>{d.get('coin_long_term'):.2f}</code>\n"
+
             f"───────────────────\n"
             f"<i>Filtre: {len(d.get('INDEX_BASKET', []))} coinlik sepet analizi.</i>"
         )
+        """
+
+    # market_report.py - format_table_response fonksiyonuna ekle
+    if result.get("type") == "INDEX_REPORT":
+        d = result.get("data", {})
+        
+        # 1. Ana Alt Power skorları
+        lines = [
+            f"📊 <b>ALT MARKET POWER</b>",
+            f"───────────────────"
+        ]
+        
+        # Skor satırları
+        for key in ['alt_vs_btc_short', 'alt_short_term', 'coin_long_term']:
+            val = d.get(key)
+            icon = "🟢" if val and val > 60 else "🔴" if val and val < 40 else "🟡"
+            label = {
+                'alt_vs_btc_short': 'Alt vs BTC (Kısa)',
+                'alt_short_term': 'Alt Gücü (Kısa)',
+                'coin_long_term': 'Yapısal Güç (OI)'
+            }[key]
+            lines.append(f"{icon} <b>{label}:</b> <code>{val:.2f}</code>")
+        
+        lines.append(f"───────────────────")
+        
+        # 2. ETF Akışları
+        etf_data = d.get("etf_summary", {})
+        if etf_data:
+            lines.append(f"📈 <b>ETF AKIŞLARI</b>")
+            for asset, info in etf_data.items():
+                flow = info.get("flow", 0)
+                icon = "🟢" if flow > 0 else "🔴"
+                lines.append(f"{icon} {asset}: <code>{flow:+.1f}M$</code> ({info.get('date', 'N/A')})")
+            lines.append(f"───────────────────")
+        
+        # 3. Top Kategoriler
+        top_cats = d.get("top_categories", [])
+        if top_cats:
+            lines.append(f"🏷️ <b>ÖNE ÇIKAN KATEGORİLER</b>")
+            for i, cat in enumerate(top_cats, 1):
+                change = cat.get("change", 0)
+                icon = "📈" if change > 0 else "📉"
+                lines.append(f"{i}. <b>{cat['name']}</b> {icon} <code>{change:+.1f}%</code>")
+            lines.append(f"───────────────────")
+        
+        # 4. Market Context
+        mkt = d.get("market_context", {})
+        if mkt:
+            btc_dom = mkt.get("btc_dominance")
+            if not math.isnan(btc_dom):
+                lines.append(f"🌐 <b>BTC Dominance:</b> <code>{btc_dom:.1f}%</code>")
+        
+        # 5. Makro regime
+        regime = d.get("macro_regime", "Unknown")
+        lines.append(f"🎯 <b>Makro Regime:</b> {regime}")
+        
+        return "\n".join(lines)
+        
+
+
+
+
 
     # -----------------------------
     # OI_REPORT (Ör. /toi)
@@ -230,3 +293,80 @@ def get_help_text(cmd: str) -> str:
         return f"{text} | Modüller: {', '.join(tags)}"
 
     return f"Use: {cmd} [SYMBOL] or {cmd} [NUMBER]"
+
+
+"""
+Sınıfına ETF Veri Çekme Metodu
+Momentum raporu hazırlandığı sırada veritabanındaki en son 
+ETF durumunu getirmek için bu metodu MarketAnalyzer içine ekle:
+"""
+    
+
+async def get_latest_etf_summary(self):
+        """En son kaydedilen ETF verilerini asset bazlı özetler."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Her asset için en son ts'ye sahip kaydı getir
+            query = """
+            SELECT asset, date_str, total_flow 
+            FROM etf_flows 
+            WHERE ts = (SELECT MAX(ts) FROM etf_flows)
+            """
+            cursor = await db.execute(query)
+            rows = await cursor.fetchall()
+            
+            summary = []
+            for r in rows:
+                emoji = "🟢" if r['total_flow'] > 0 else "🔴"
+                summary.append(f"{r['asset']}: {emoji} {r['total_flow']}M$ ({r['date_str']})")
+            
+            return " | ".join(summary) if summary else "ETF Verisi Henüz Yok"
+    
+"""
+check_and_notify Fonksiyonunun Güncellenmesi
+Bu fonksiyonu, ETF özetini alacak ve 
+bildirim mesajının altına ekleyecek şekilde güncelle:
+
+"""
+async def check_and_notify(notifier, analyzer):
+    """ETF dipnotu eklenmiş güncel bildirim sistemi."""
+    threshold = 8.0
+    all_signals = await analyzer.get_momentum_signals(min_oi_change=threshold)
+    
+    if not all_signals:
+        return
+
+    valid_signals = []
+    now = time.time()
+    
+    for s in all_signals:
+        symbol = s['symbol'].replace('USDT', '')
+        last_time = notifier.last_sent.get(symbol, 0)
+        
+        if now - last_time >= notifier.cooldown:
+            valid_signals.append(s)
+            notifier.last_sent[symbol] = now
+
+    if valid_signals:
+        # ETF Özetini Al (YENİ)
+        etf_summary = await analyzer.get_latest_etf_summary()
+        
+        result = {
+            "type": "OI_REPORT",
+            "signals": valid_signals,
+            "min_oi_change": threshold,
+            "is_auto_alert": True 
+        }
+        
+        formatted_msg = format_table_response(result)
+        
+        # Mesajı birleştir ve ETF özetini dipnot olarak ekle
+        final_msg = (
+            f"🔔 <b>MOMENTUM ALARMI</b>\n"
+            f"{formatted_msg}\n"
+            f"📊 <b>Son ETF Akışları:</b>\n"
+            f"<code>{etf_summary}</code>"
+        )
+        
+        await notifier.send_notification(final_msg)
+        logger.info(f"📥📢 Alarm ve ETF özeti gönderildi.")
