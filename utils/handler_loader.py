@@ -22,6 +22,7 @@ async def start_cmd(message: Message):
 
 """
 
+# handler_loader.py
 import sys
 import logging
 import importlib.util
@@ -83,25 +84,32 @@ class HandlerCache:
 # ---------------------------
 # PROD HANDLER LOADER
 # ---------------------------
-
-class HandlerLoader:
     """
     PROD ONLY
     - Dosya / klasör oluşturmaz
     - Sadece var olan .py dosyaları yükler
     - Router zorunludur
+    - Hariç tutulan listesi var
     """
-
+    
+class HandlerLoader:
     def __init__(
         self,
         dispatcher: Dispatcher,
         base_path: str = "handlers",
         handler_dirs: Optional[List[str]] = None,
+        # 1️⃣ Hariç tutulacak dosya isimlerini buraya ekliyoruz
+        exclude_files: Optional[List[str]] = None, 
     ):
         self.dispatcher = dispatcher
         self.base_path = Path(base_path)
         self.handler_dirs = handler_dirs or [
             "commands", "callbacks", "messages", "admin", "errors"
+        ]
+        # Varsayılan olarak engellenecek dosyalar
+        self.exclude_files = exclude_files or [
+            "report_format.py", "market_report.py","notes_module.py",
+            "base.py"
         ]
         self.cache = HandlerCache()
 
@@ -156,16 +164,19 @@ class HandlerLoader:
 
         return result.to_dict()
 
-
-
     # -----------------------
-
     async def _load_single_module(
         self,
         module_name: str,
         file_path: Path,
         result: HandlerLoadResult,
     ):
+        # 2️⃣ Dosya ismini kontrol et (Örn: report_format.py)
+        if file_path.name in self.exclude_files:
+            logger.debug(f"⏭️ Hariç tutuldu (Exclude list): {file_path.name}")
+            # result.skipped += 1  # İsteğe bağlı istatistiğe ekle
+            return
+
         if self.cache.is_loaded(module_name):
             logger.debug(f"⏭️ Zaten yüklü: {module_name}")
             result.skipped += 1
